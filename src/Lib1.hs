@@ -22,8 +22,31 @@ toLowerCase c
  | 'A' <= c && c <= 'Z' = toEnum (fromEnum c + 32)
  | otherwise = c
 
-comparer :: a -> [b] -> Boll 
-comparer :: a
+getColumnType :: Column -> ColumnType
+getColumnType (Column _ colType) = colType
+
+compareValueToType :: Value -> ColumnType -> Bool
+compareValueToType (IntegerValue _) IntegerType = True
+compareValueToType (StringValue _) StringType = True
+compareValueToType (BoolValue _) BoolType = True
+compareValueToType NullValue _ = True
+compareValueToType _ _ = False
+
+compareOneRowToColumns :: [Value] -> [Column] -> Bool
+compareOneRowToColumns [] [] = True
+compareOneRowToColumns [] _ = False
+compareOneRowToColumns _ [] = False
+compareOneRowToColumns (x:xs) (y:ys)
+ | compareValueToType x (getColumnType y) = compareOneRowToColumns xs ys
+ | otherwise = False
+
+compareRowsToColumns :: [[Value]] -> [Column] -> Bool
+compareRowsToColumns [] [] = True
+compareRowsToColumns [] _ = True
+compareRowsToColumns _ [] = False
+compareRowsToColumns (x:xs) col
+ |compareOneRowToColumns x col = compareRowsToColumns xs col
+ |otherwise = False
 
 -- 1) implement the function which returns a data frame by its name
 -- in provided Database list
@@ -55,7 +78,15 @@ parseSelectAllStatement input
 -- columns match value types, if rows sizes match columns,..
 validateDataFrame :: DataFrame -> Either ErrorMessage ()
 validateDataFrame (DataFrame columns rows)
-  | 
+  | (length columns /= maximum rowLengths) || (length columns /= minimum rowLengths) = Left "Column and row count mismatch" 
+  | compareRowsToColumns rows columns == False = Left "Column types do not match row values"
+  | otherwise = Right ()
+    where 
+      rowLengths = [length x | x <- rows]
+      colTypes = [getColumnType x | x <- columns]
+      
+                
+
 
 -- 4) implement the function which renders a given data frame
 -- as ascii-art table (use your imagination, there is no "correct"
