@@ -10,6 +10,7 @@ where
 
 import DataFrame (DataFrame (..), Row, Column (..), ColumnType (..), Value (..))
 import InMemoryTables (TableName)
+import Data.List (intercalate, transpose)
 
 type ErrorMessage = String
 
@@ -93,4 +94,63 @@ validateDataFrame (DataFrame columns rows)
 -- answer for this task!), it should respect terminal
 -- width (in chars, provided as the first argument)
 renderDataFrameAsTable :: Integer -> DataFrame -> String
-renderDataFrameAsTable _ _ = error "renderDataFrameAsTable not implemented"
+renderDataFrameAsTable width (DataFrame columns rows) = unlines (headerLines ++ rowLines)
+  where
+    intWidth = fromIntegral width
+    colWidths = determineColumnWidths intWidth columns rows
+    headerLines = renderHeaders colWidths (map getColumnName columns)
+    rowLines = renderRows colWidths rows
+
+-- Extract column name from Column data type
+getColumnName :: Column -> String
+getColumnName (Column name _) = name
+
+-- Convert Value to a displayable String
+valueToString :: Value -> String
+valueToString (IntegerValue i) = show i
+valueToString (StringValue s) = s
+valueToString (BoolValue b) = show b
+valueToString NullValue = "NULL"
+
+-- Calculate the width for each column
+-- Calculate the width for each column
+determineColumnWidths :: Int -> [Column] -> [Row] -> [Int]
+determineColumnWidths maxWidth columns rows =
+  let
+    columnNamesWidths = map (length . getColumnName) columns
+    maxValuesWidths = map (maximum . map (length . valueToString)) (transpose rows)
+    calculatedWidths = zipWith max columnNamesWidths maxValuesWidths
+    extraSpace = maxWidth - (sum calculatedWidths + 3 * (length columns - 1))
+    extraForEachColumn = extraSpace `div` length columns
+  in
+    map (+ extraForEachColumn) calculatedWidths
+-- Render headers with underlines
+renderHeaders :: [Int] -> [String] -> [String]
+renderHeaders colWidths headers = 
+  [intercalate " | " (zipWith pad colWidths headers), intercalate "-+-" (map (\w -> replicate w '-') colWidths)]
+
+-- Splits a string based on newline characters and the given width.
+splitByWidth :: Int -> String -> [String]
+splitByWidth w s = concatMap (splitByWidthWithoutNewlines w) (lines s)
+
+-- Further splits a string line if its length exceeds the given width.
+splitByWidthWithoutNewlines :: Int -> String -> [String]
+splitByWidthWithoutNewlines _ [] = []
+splitByWidthWithoutNewlines w s = 
+    take w s : splitByWidthWithoutNewlines w (drop w s)
+
+-- Render rows of the table
+renderRows :: [Int] -> [Row] -> [String]
+renderRows colWidths rows = 
+  concatMap (\row -> renderMultiLineRow colWidths (zipWith splitByWidth colWidths (map valueToString row))) rows
+
+-- Render rows that might span multiple lines due to their content.
+renderMultiLineRow :: [Int] -> [[String]] -> [String]
+renderMultiLineRow widths valuesLines = 
+  let maxLines = maximum (map length valuesLines)
+      paddedValuesLines = map (\(w, lines) -> map (pad w) lines ++ replicate (maxLines - length lines) (pad w "")) (zip widths valuesLines)
+  in [intercalate " | " lineValues | lineValues <- transpose paddedValuesLines]
+
+-- Helper function to pad strings
+pad :: Int -> String -> String
+pad n s = take n (s ++ repeat ' ')
