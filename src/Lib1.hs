@@ -69,11 +69,12 @@ parseSelectAllStatement "" = Left "Error - empty input"
 parseSelectAllStatement input
   | length input' < 15 = Left "Error - invalid input"
   | map toLowerCase (take 14 input') /= "select * from " = Left "Error - invalid input"
+  | lastChar /= ';' = Left "Error - SQL statement must end with a semicolon"
   | otherwise = Right (drop 14 input')
     where
-      input' = case last input of
-        ';' -> take (length input - 1) input
-        _ -> input
+      input' = take (length input - 1) input
+      lastChar = last input
+
 
 -- 3) implement the function which validates tables: checks if
 -- columns match value types, if rows sizes match columns,..
