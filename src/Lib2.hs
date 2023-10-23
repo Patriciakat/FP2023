@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -Wno-unused-top-binds #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Lib2
   ( parseStatement,
@@ -12,7 +13,7 @@ import InMemoryTables (TableName)
 import Lib1 (renderDataFrameAsTable)
 import qualified Text.Parsec as P
 import Text.Parsec ((<?>))
-import Data.Char (toUpper)
+import Data.Char (toUpper, toLower)
 import Data.List (isPrefixOf, elemIndex, find)
 import Data.Maybe (isJust, mapMaybe, catMaybes, fromJust)
 
@@ -26,6 +27,7 @@ data ParsedStatement
     | SelectFrom { selectedColumns :: [String], fromTable :: TableName }
     | SelectMin { columns :: [String], fromTable :: TableName }
     | SelectWithMin { minColumns :: [String], otherColumns :: [String], fromTable :: TableName }
+    | SelectAvg { columns :: [String], fromTable :: TableName }
     | StatementWithFilters { columns :: [String], database :: String, filters :: [String] }
     | StatementWithoutFilters { columns :: [String], database :: String }
     | StatementSelectAll { database :: String }
@@ -48,12 +50,12 @@ columnsListParser = columnNameParser `P.sepBy1` (P.char ',' >> P.many P.space)
     
 selectParser :: P.Parsec String () ParsedStatement
 selectParser = do
-    _ <- P.string "SELECT" <?> "SELECT keyword"
+    _ <- caseInsensitiveString "SELECT" <?> "SELECT keyword"
     _ <- P.many P.space
     selectType <- (P.try (P.char '*' >> return (StatementSelectAll "")) <?> "Wildcard '*'")
                P.<|> ((columnsListParser >>= \cols -> return (SelectFrom cols "")) <?> "Column list")
     _ <- P.many P.space
-    _ <- P.string "FROM" <?> "FROM keyword"
+    _ <- caseInsensitiveString "FROM" <?> "FROM keyword"
     _ <- P.many P.space
     tablename <- P.many1 (P.alphaNum P.<|> P.char '_') <?> "Table name"
     case selectType of
@@ -64,13 +66,13 @@ selectParser = do
         
 minParser :: P.Parsec String () ParsedStatement
 minParser = do
-    _ <- P.string "SELECT"
+    _ <- caseInsensitiveString "SELECT"
     _ <- P.many P.space
-    _ <- P.string "MIN("
+    _ <- caseInsensitiveString "MIN("
     columns <- columnsListParser
     _ <- P.string ")"
     _ <- P.many P.space
-    _ <- P.string "FROM"
+    _ <- caseInsensitiveString "FROM"
     _ <- P.many P.space
     tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
     return $ SelectMin columns tablename
@@ -79,23 +81,42 @@ minParser = do
     
 minWithOtherColumnsParser :: P.Parsec String () ParsedStatement
 minWithOtherColumnsParser = do
-    _ <- P.string "SELECT"
+    _ <- caseInsensitiveString "SELECT"
     _ <- P.many P.space
-    _ <- P.string "MIN("
+    _ <- caseInsensitiveString "MIN("
     minCols <- columnsListParser
     _ <- P.string ")"
     _ <- P.many P.space
     _ <- P.char ',' >> P.many P.space
     otherCols <- columnsListParser
     _ <- P.many P.space
-    _ <- P.string "FROM"
+    _ <- caseInsensitiveString "FROM"
     _ <- P.many P.space
     tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
     return $ SelectWithMin minCols otherCols tablename
+    
+--task 3, AVG function
+
+avgParser :: P.Parsec String () ParsedStatement
+avgParser = do
+    _ <- caseInsensitiveString "SELECT"
+    _ <- P.many P.space
+    _ <- caseInsensitiveString "AVG("
+    columns <- columnsListParser
+    _ <- P.string ")"
+    _ <- P.many P.space
+    _ <- caseInsensitiveString "FROM"
+    _ <- P.many P.space
+    tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
+    return $ SelectAvg columns tablename
 
 -- Parses user input into an entity representing a parsed statement
 parseStatement :: String -> Either ErrorMessage ParsedStatement
 parseStatement input
+    | "SELECT AVG(" `isPrefixOf` (map toUpper input) = 
+        case P.parse avgParser "" input of
+            Left err -> Left $ "Parse Error: " ++ show err
+            Right stmt -> Right stmt
     | "SELECT MIN(" `isPrefixOf` (map toUpper input) = 
             case P.parse (P.try minWithOtherColumnsParser P.<|> minParser) "" input of
                 Left err -> Left $ "Parse Error: " ++ show err
@@ -105,6 +126,7 @@ parseStatement input
             Left err -> Left $ "Parse Error: " ++ show err
             Right stmt -> Right stmt
     | otherwise = Left "Invalid SQL command"
+
         
         
 --------------------------------------------------- Execute ----------------------------------------------------    
@@ -176,7 +198,26 @@ executeStatement (SelectWithMin minCols otherCols tableName) db =
             in Right $ DataFrame (map (\c -> Column c IntegerType) minCols ++ map (\c -> Column c (fromJust $ columnTypeByName c allColumns)) otherCols) [minValues ++ otherValues]
         Nothing -> Left "Table not found"
         
---execute for SELECT * FROM tablename        
+--execute for AVG function
+
+executeStatement (SelectAvg columns tableName) db = 
+    case lookup tableName db of
+        Just (DataFrame allColumns allRows) -> 
+            let avgValues = map (\column -> 
+                        let columnIndex = elemIndex column (map columnName allColumns) in
+                        case columnIndex of
+                            Just idx -> 
+                                let colValues = map (\row -> case row !! idx of 
+                                                                  StringValue str -> read str :: Float 
+                                                                  IntegerValue int -> fromIntegral int
+                                                                  _ -> error "Unsupported value type.") allRows
+                                    avgValue = sum colValues / (fromIntegral (length colValues))
+                                in FloatValue avgValue  -- Ensuring it's wrapped in FloatValue
+                            Nothing -> error $ "Column " ++ column ++ " not found") columns
+            in Right $ DataFrame (map (\c -> Column c FloatType) columns) [avgValues]
+        Nothing -> Left "Table not found"
+        
+--execute for SELECT * FROM tablename
 
 executeStatement (StatementSelectAll tableName) db = 
     case lookup tableName db of
@@ -267,6 +308,11 @@ elemAt idx xs
   
 columnTypeByName :: String -> [Column] -> Maybe ColumnType
 columnTypeByName colName cols = columnType <$> find (\(Column name _) -> name == colName) cols
+
+caseInsensitiveString :: String -> P.Parsec String () String
+caseInsensitiveString s = P.try (mapM caseInsensitiveChar s)
+    where
+        caseInsensitiveChar c = P.char (toLower c) P.<|> P.char (toUpper c)
   
 -- Test Functions
 testColumnNameParser :: String -> Either P.ParseError String

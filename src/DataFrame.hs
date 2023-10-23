@@ -4,6 +4,7 @@ data ColumnType
   = IntegerType
   | StringType
   | BoolType
+  | FloatType
   deriving (Show, Eq)
 
 data Column = Column String ColumnType
@@ -13,6 +14,7 @@ data Value
   = IntegerValue Integer
   | StringValue String
   | BoolValue Bool
+  | FloatValue Float
   | NullValue
   deriving (Show, Eq)
 
