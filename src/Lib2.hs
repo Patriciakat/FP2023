@@ -43,6 +43,8 @@ columnNameParser :: P.Parsec String () String
 columnNameParser = P.many1 (P.alphaNum P.<|> P.char '_')
 columnsListParser :: P.Parsec String () [String]
 columnsListParser = columnNameParser `P.sepBy1` (P.char ',' >> P.many P.space)
+
+-- task 3, column list
     
 selectParser :: P.Parsec String () ParsedStatement
 selectParser = do
@@ -58,6 +60,8 @@ selectParser = do
         StatementSelectAll _ -> return $ StatementSelectAll tablename
         SelectFrom cols _   -> return $ SelectFrom cols tablename
         
+--task 3, MIN function
+        
 minParser :: P.Parsec String () ParsedStatement
 minParser = do
     _ <- P.string "SELECT"
@@ -70,6 +74,8 @@ minParser = do
     _ <- P.many P.space
     tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
     return $ SelectMin columns tablename
+    
+--task 3, MIN function with other columns, e.g.: SELECT MIN(id), surname FROM employees etc.
     
 minWithOtherColumnsParser :: P.Parsec String () ParsedStatement
 minWithOtherColumnsParser = do
@@ -106,6 +112,9 @@ parseStatement input
     
 -- Executes a parsed statement. Produces a DataFrame. Uses
 -- InMemoryTables.databases a source of data.
+
+--execute for MIN function
+
 executeStatement :: ParsedStatement -> Database -> Either ErrorMessage DataFrame
 executeStatement (SelectMin columns tableName) db = 
     case lookup tableName db of
@@ -123,7 +132,8 @@ executeStatement (SelectMin columns tableName) db =
                             Nothing -> error $ "Column " ++ column ++ " not found") columns
             in Right $ DataFrame (map (\c -> Column c IntegerType) columns) [minValues]
         Nothing -> Left "Table not found"
-        
+  
+--execute for SELECT column, column, ... FROM tablename (column list)        
         
 executeStatement (SelectFrom selectedCols tableName) db = 
     case lookup tableName db of
@@ -137,6 +147,8 @@ executeStatement (SelectFrom selectedCols tableName) db =
                 newCols = map (allColumns !!) validIndices
             in Right $ DataFrame newCols newRows
         Nothing -> Left "Table not found"
+        
+--execute for MIN function and other columns, e.g.: SELECT MIN(column), column, column, ... FROM tablename
         
 executeStatement (SelectWithMin minCols otherCols tableName) db = 
     case lookup tableName db of
@@ -163,6 +175,8 @@ executeStatement (SelectWithMin minCols otherCols tableName) db =
                 
             in Right $ DataFrame (map (\c -> Column c IntegerType) minCols ++ map (\c -> Column c (fromJust $ columnTypeByName c allColumns)) otherCols) [minValues ++ otherValues]
         Nothing -> Left "Table not found"
+        
+--execute for SELECT * FROM tablename        
 
 executeStatement (StatementSelectAll tableName) db = 
     case lookup tableName db of
