@@ -14,7 +14,7 @@ import qualified Text.Parsec as P
 import Text.Parsec ((<?>))
 import Data.Char (toUpper)
 import Data.List (isPrefixOf, elemIndex, find)
-import Data.Maybe (isJust, mapMaybe, catMaybes)
+import Data.Maybe (isJust, mapMaybe, catMaybes, fromJust)
 
 type ErrorMessage = String
 type Database = [(TableName, DataFrame)]
@@ -24,13 +24,16 @@ data ParsedStatement
     = ShowTables
     | ShowTable TableName
     | SelectFrom { selectedColumns :: [String], fromTable :: TableName }
-    | SelectMin { column :: String, fromTable :: TableName }
+    | SelectMin { columns :: [String], fromTable :: TableName }
+    | SelectWithMin { minColumns :: [String], otherColumns :: [String], fromTable :: TableName }
     | StatementWithFilters { columns :: [String], database :: String, filters :: [String] }
     | StatementWithoutFilters { columns :: [String], database :: String }
     | StatementSelectAll { database :: String }
     deriving (Show, Eq)
     
+    
 --------------------------------------------------- Parser ----------------------------------------------------
+
 
 -- Features:
 -- - Basic column selection (e.g., SELECT column1, column2 FROM table)
@@ -60,47 +63,67 @@ minParser = do
     _ <- P.string "SELECT"
     _ <- P.many P.space
     _ <- P.string "MIN("
-    column <- columnNameParser
+    columns <- columnsListParser
     _ <- P.string ")"
     _ <- P.many P.space
     _ <- P.string "FROM"
     _ <- P.many P.space
     tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
-    return $ SelectMin column tablename
+    return $ SelectMin columns tablename
+    
+minWithOtherColumnsParser :: P.Parsec String () ParsedStatement
+minWithOtherColumnsParser = do
+    _ <- P.string "SELECT"
+    _ <- P.many P.space
+    _ <- P.string "MIN("
+    minCols <- columnsListParser
+    _ <- P.string ")"
+    _ <- P.many P.space
+    _ <- P.char ',' >> P.many P.space
+    otherCols <- columnsListParser
+    _ <- P.many P.space
+    _ <- P.string "FROM"
+    _ <- P.many P.space
+    tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
+    return $ SelectWithMin minCols otherCols tablename
 
 -- Parses user input into an entity representing a parsed statement
 parseStatement :: String -> Either ErrorMessage ParsedStatement
 parseStatement input
     | "SELECT MIN(" `isPrefixOf` (map toUpper input) = 
-        case P.parse minParser "" input of
-            Left err -> Left $ "Parse Error: " ++ show err
-            Right stmt -> Right stmt
+            case P.parse (P.try minWithOtherColumnsParser P.<|> minParser) "" input of
+                Left err -> Left $ "Parse Error: " ++ show err
+                Right stmt -> Right stmt
     | "SELECT" `isPrefixOf` (map toUpper input) = 
         case P.parse selectParser "" input of
             Left err -> Left $ "Parse Error: " ++ show err
             Right stmt -> Right stmt
     | otherwise = Left "Invalid SQL command"
         
+        
 --------------------------------------------------- Execute ----------------------------------------------------    
+    
     
 -- Executes a parsed statement. Produces a DataFrame. Uses
 -- InMemoryTables.databases a source of data.
 executeStatement :: ParsedStatement -> Database -> Either ErrorMessage DataFrame
-executeStatement (SelectMin column tableName) db = 
+executeStatement (SelectMin columns tableName) db = 
     case lookup tableName db of
         Just (DataFrame allColumns allRows) -> 
-            let columnIndex = elemIndex column (map columnName allColumns)
-            in case columnIndex of
-                Just idx -> 
-                    let colValues = map (\row -> case row !! idx of 
-                                                    StringValue str -> read str :: Int 
-                                                    IntegerValue int -> fromIntegral int
-                                                    _ -> error "Unsupported value type.") allRows
-
-                        minValue = minimum colValues
-                    in Right $ DataFrame [Column column IntegerType] [[IntegerValue (fromIntegral minValue)]]
-                Nothing -> Left "Column not found"
+            let minValues = map (\column -> 
+                        let columnIndex = elemIndex column (map columnName allColumns) in
+                        case columnIndex of
+                            Just idx -> 
+                                let colValues = map (\row -> case row !! idx of 
+                                                                  StringValue str -> read str :: Int 
+                                                                  IntegerValue int -> fromIntegral int
+                                                                  _ -> error "Unsupported value type.") allRows
+                                    minValue = minimum colValues
+                                in IntegerValue (fromIntegral minValue)
+                            Nothing -> error $ "Column " ++ column ++ " not found") columns
+            in Right $ DataFrame (map (\c -> Column c IntegerType) columns) [minValues]
         Nothing -> Left "Table not found"
+        
         
 executeStatement (SelectFrom selectedCols tableName) db = 
     case lookup tableName db of
@@ -113,6 +136,32 @@ executeStatement (SelectFrom selectedCols tableName) db =
                 newRows = map (\row -> map (row !!) validIndices) allRows
                 newCols = map (allColumns !!) validIndices
             in Right $ DataFrame newCols newRows
+        Nothing -> Left "Table not found"
+        
+executeStatement (SelectWithMin minCols otherCols tableName) db = 
+    case lookup tableName db of
+        Just (DataFrame allColumns allRows) -> 
+            let minValues = map (\column -> 
+                        let columnIndex = elemIndex column (map columnName allColumns) in
+                        case columnIndex of
+                            Just idx -> 
+                                let colValues = map (\row -> case row !! idx of 
+                                                                  StringValue str -> read str :: Int 
+                                                                  IntegerValue int -> fromIntegral int
+                                                                  _ -> error "Unsupported value type.") allRows
+                                    minValue = minimum colValues
+                                in IntegerValue (fromIntegral minValue)
+                            Nothing -> error $ "Column " ++ column ++ " not found") minCols
+
+                -- Find the row with the minimum value for the minCols column
+                minRow = head $ filter (\row -> (case row !! (fromJust $ elemIndex (head minCols) (map columnName allColumns)) of
+                                                     IntegerValue int -> int == (case head minValues of
+                                                                                      IntegerValue minValue -> minValue
+                                                                                      _ -> error "Unexpected value type.")
+                                                     _ -> False)) allRows
+                otherValues = map (\col -> minRow !! (fromJust $ elemIndex col (map columnName allColumns))) otherCols
+                
+            in Right $ DataFrame (map (\c -> Column c IntegerType) minCols ++ map (\c -> Column c (fromJust $ columnTypeByName c allColumns)) otherCols) [minValues ++ otherValues]
         Nothing -> Left "Table not found"
 
 executeStatement (StatementSelectAll tableName) db = 
