@@ -7,39 +7,73 @@ module Lib2
   )
 where
 
-import DataFrame (DataFrame)
+import DataFrame
+import DataFrame (DataFrame(..))
+import Data.List (elemIndex)
+import Data.Maybe (isJust, mapMaybe)
 import InMemoryTables (TableName)
+import qualified Text.Parsec as P
+import Data.Maybe (isJust, mapMaybe, catMaybes)
 
 type ErrorMessage = String
 type Database = [(TableName, DataFrame)]
 
 -- Keep the type, modify constructors
 data ParsedStatement
-  = StatementWithFilters { columns :: [String], database :: String, filters :: [String] } --for: select _____ from _____ where _____
-  | StatementWithoutFilters { columns :: [String], database :: String }                   --for: select _____ from _____
-  | StatementSelectAll { database :: String }                                             --for: select * from _____
-  | StatementShowTableName {statement :: String, name :: String}
-  | StatementShowTables { statement :: String}
+    = ShowTables
+    | ShowTable TableName
+    | SelectFrom { selectedColumns :: [String], fromTable :: TableName }
+    | StatementWithFilters { columns :: [String], database :: String, filters :: [String] }
+    | StatementWithoutFilters { columns :: [String], database :: String }
+    | StatementSelectAll { database :: String }
+    deriving (Show, Eq)
+    
+selectStarParser :: P.Parsec String () ParsedStatement
+selectStarParser = do
+    _ <- P.string "SELECT"
+    _ <- P.spaces
+    _ <- P.char '*'
+    _ <- P.spaces
+    _ <- P.string "FROM"
+    _ <- P.spaces
+    tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
+    return $ StatementSelectAll tablename
+
+    
+elemAt :: Int -> [a] -> Maybe a
+elemAt idx xs
+  | idx < 0 || idx >= length xs = Nothing
+  | otherwise                   = Just (xs !! idx)
+    
+parseSelectStar :: String -> Either P.ParseError ParsedStatement
+parseSelectStar = P.parse selectStarParser ""
 
 -- Parses user input into an entity representing a parsed statement
 parseStatement :: String -> Either ErrorMessage ParsedStatement
-parseStatement _ = Left "Not implemented: parseStatement"
--- parseStatement statement = case components of                         --sitos savo parasytos parseStatement dalies visiskai netestavau
---   last components /= ";" = Left "Missing ';' at the end"
---   length components == 2 -> if map toLowerCase y == "showtables" then Right StatementShowTables "showTables" else Left "Invalid query"
---   length components == 3 -> if map toLowerCase y == "showtable" then Right StatementShowTableName "showTableName" (head ys) else Left "Invalid query"
---   _ -> do --IDK
---   where
---     components = separateLastSemicolon . splitToComponents $ statement
---     y = head components
---     ys = tail components
-
--- Executes a parsed statemet. Produces a DataFrame. Uses
+parseStatement input =
+    case parseSelectStar input of
+        Left err -> Left $ show err
+        Right stmt -> Right stmt
+    
+-- Executes a parsed statement. Produces a DataFrame. Uses
 -- InMemoryTables.databases a source of data.
-executeStatement :: ParsedStatement -> Either ErrorMessage DataFrame
-executeStatement _ = Left "Not implemented: executeStatement"
+executeStatement (SelectFrom columns tableName) db =
+    case lookup tableName db of
+        Just (DataFrame allColumns allRows) -> 
+            let indices = catMaybes $ map (\col -> elemIndex col (map columnName allColumns)) columns
+            in if length indices == length columns  -- Ensuring all columns are found
+               then let selectedCols = map (\idx -> allColumns !! idx) indices
+                        selectedRows = map (\row -> [ row !! idx | idx <- indices ]) allRows
+                    in Right $ DataFrame selectedCols selectedRows
+               else Left "Some columns not found"
+        Nothing -> Left "Table not found"
 
+executeStatement (StatementSelectAll tableName) db = 
+    case lookup tableName db of
+        Just df -> Right df
+        Nothing -> Left "Table not found"
 
+executeStatement _ _ = Left "Statement not supported or invalid"
 -------------------------------------------------- helper functions -------------------------------------------------- 
 
 -- iterates through a string until reaches a specific element
@@ -76,8 +110,8 @@ separateElement (x:xs) a
 
 -- splits a query into words and separates commas
 -- egz.: 
--- splitToComponents "gass, grass,brass,,sash"
--- >> ["gass" "," "grass" "," "brass" "," "," "sash"]
+-- splitToComponents "grass, grass,brass,,sash"
+-- >> ["grass" "," "grass" "," "brass" "," "," "sash"]
 splitToComponents :: String -> [String]
 splitToComponents [] = []
 splitToComponents query = 
@@ -105,3 +139,6 @@ toLowerCase :: Char -> Char
 toLowerCase c
  | 'A' <= c && c <= 'Z' = toEnum (fromEnum c + 32)
  | otherwise = c
+ 
+columnName :: Column -> String
+columnName (Column name _) = name
