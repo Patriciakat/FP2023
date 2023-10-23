@@ -42,7 +42,7 @@ cmd c = do
     cmd' :: Integer -> Either String String
     cmd' s = do
       stmt <- Lib2.parseStatement c
-      df <- Lib2.executeStatement stmt
+      df <- Lib2.executeStatement stmt database
       _ <- Lib1.validateDataFrame df
       return $ Lib1.renderDataFrameAsTable s df
 

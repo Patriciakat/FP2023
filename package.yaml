@@ -38,6 +38,8 @@ ghc-options:
 
 library:
   source-dirs: src
+  dependencies:
+    - parsec
 
 executables:
   fp2023-select-all:
@@ -52,6 +54,7 @@ executables:
     - extra
     - repline
     - terminal-size
+    - parsec
   fp2023-select-more:
     main:                Main.hs
     source-dirs:         app2
@@ -64,6 +67,7 @@ executables:
     - extra
     - repline
     - terminal-size
+    - parsec
 
 tests:
   fp2023-test:
@@ -76,3 +80,4 @@ tests:
     dependencies:
     - fp2023
     - hspec
+    - parsec
