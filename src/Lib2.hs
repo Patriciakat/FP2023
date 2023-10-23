@@ -8,7 +8,6 @@ module Lib2
 where
 
 import DataFrame
-import DataFrame (DataFrame(..))
 import Data.List (elemIndex)
 import Data.Maybe (isJust, mapMaybe)
 import InMemoryTables (TableName)
@@ -28,32 +27,41 @@ data ParsedStatement
     | StatementSelectAll { database :: String }
     deriving (Show, Eq)
     
-selectStarParser :: P.Parsec String () ParsedStatement
-selectStarParser = do
-    _ <- P.string "SELECT"
-    _ <- P.spaces
-    _ <- P.char '*'
-    _ <- P.spaces
-    _ <- P.string "FROM"
-    _ <- P.spaces
-    tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
-    return $ StatementSelectAll tablename
+--------------------------------------------------- Parser ----------------------------------------------------
 
+-- Features:
+-- - Basic column selection (e.g., SELECT column1, column2 FROM table)
+-- - Wildcard selection (e.g., SELECT * FROM table)
+-- - Aggregate functions: MIN (e.g., SELECT MIN(column) FROM table)
+
+columnNameParser :: P.Parsec String () String
+columnNameParser = P.many1 (P.alphaNum P.<|> P.char '_')
+columnsListParser :: P.Parsec String () [String]
+columnsListParser = columnNameParser `P.sepBy1` (P.char ',' >> P.many P.space)
     
-elemAt :: Int -> [a] -> Maybe a
-elemAt idx xs
-  | idx < 0 || idx >= length xs = Nothing
-  | otherwise                   = Just (xs !! idx)
+selectParser :: P.Parsec String () ParsedStatement
+selectParser = do
+    _ <- P.string "SELECT"
+    _ <- P.many P.space
+    columns <- P.try (P.char '*' >> return []) P.<|> columnsListParser
+    _ <- P.many P.space
+    _ <- P.string "FROM"
+    _ <- P.many P.space
+    tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
+    if null columns
+        then return $ StatementSelectAll tablename
+        else return $ SelectFrom columns tablename
     
-parseSelectStar :: String -> Either P.ParseError ParsedStatement
-parseSelectStar = P.parse selectStarParser ""
+parseSelect :: String -> Either P.ParseError ParsedStatement
+parseSelect = P.parse selectParser ""
 
 -- Parses user input into an entity representing a parsed statement
-parseStatement :: String -> Either ErrorMessage ParsedStatement
 parseStatement input =
-    case parseSelectStar input of
+    case parseSelect input of
         Left err -> Left $ show err
         Right stmt -> Right stmt
+        
+--------------------------------------------------- Execute ----------------------------------------------------    
     
 -- Executes a parsed statement. Produces a DataFrame. Uses
 -- InMemoryTables.databases a source of data.
@@ -72,9 +80,11 @@ executeStatement (StatementSelectAll tableName) db =
     case lookup tableName db of
         Just df -> Right df
         Nothing -> Left "Table not found"
-
 executeStatement _ _ = Left "Statement not supported or invalid"
+
+
 -------------------------------------------------- helper functions -------------------------------------------------- 
+
 
 -- iterates through a string until reaches a specific element
 -- egz.:
@@ -142,3 +152,8 @@ toLowerCase c
  
 columnName :: Column -> String
 columnName (Column name _) = name
+
+elemAt :: Int -> [a] -> Maybe a
+elemAt idx xs
+  | idx < 0 || idx >= length xs = Nothing
+  | otherwise                   = Just (xs !! idx)
