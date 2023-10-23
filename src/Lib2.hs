@@ -7,40 +7,187 @@ module Lib2
   )
 where
 
-import DataFrame (DataFrame)
+import DataFrame
 import InMemoryTables (TableName)
+import Lib1 (renderDataFrameAsTable)
+import qualified Text.Parsec as P
+import Text.Parsec ((<?>))
+import Data.Char (toUpper)
+import Data.List (isPrefixOf, elemIndex, find)
+import Data.Maybe (isJust, mapMaybe, catMaybes, fromJust)
 
 type ErrorMessage = String
 type Database = [(TableName, DataFrame)]
 
 -- Keep the type, modify constructors
 data ParsedStatement
-  = StatementWithFilters { columns :: [String], database :: String, filters :: [String] } --for: select _____ from _____ where _____
-  | StatementWithoutFilters { columns :: [String], database :: String }                   --for: select _____ from _____
-  | StatementSelectAll { database :: String }                                             --for: select * from _____
-  | StatementShowTableName {statement :: String, name :: String}
-  | StatementShowTables { statement :: String}
+    = ShowTables
+    | ShowTable TableName
+    | SelectFrom { selectedColumns :: [String], fromTable :: TableName }
+    | SelectMin { columns :: [String], fromTable :: TableName }
+    | SelectWithMin { minColumns :: [String], otherColumns :: [String], fromTable :: TableName }
+    | StatementWithFilters { columns :: [String], database :: String, filters :: [String] }
+    | StatementWithoutFilters { columns :: [String], database :: String }
+    | StatementSelectAll { database :: String }
+    deriving (Show, Eq)
+    
+    
+--------------------------------------------------- Parser ----------------------------------------------------
+
+
+-- Features:
+-- - Basic column selection (e.g., SELECT column1, column2 FROM table)
+-- - Wildcard selection (e.g., SELECT * FROM table)
+
+columnNameParser :: P.Parsec String () String
+columnNameParser = P.many1 (P.alphaNum P.<|> P.char '_')
+columnsListParser :: P.Parsec String () [String]
+columnsListParser = columnNameParser `P.sepBy1` (P.char ',' >> P.many P.space)
+
+-- task 3, column list
+    
+selectParser :: P.Parsec String () ParsedStatement
+selectParser = do
+    _ <- P.string "SELECT" <?> "SELECT keyword"
+    _ <- P.many P.space
+    selectType <- (P.try (P.char '*' >> return (StatementSelectAll "")) <?> "Wildcard '*'")
+               P.<|> ((columnsListParser >>= \cols -> return (SelectFrom cols "")) <?> "Column list")
+    _ <- P.many P.space
+    _ <- P.string "FROM" <?> "FROM keyword"
+    _ <- P.many P.space
+    tablename <- P.many1 (P.alphaNum P.<|> P.char '_') <?> "Table name"
+    case selectType of
+        StatementSelectAll _ -> return $ StatementSelectAll tablename
+        SelectFrom cols _   -> return $ SelectFrom cols tablename
+        
+--task 3, MIN function
+        
+minParser :: P.Parsec String () ParsedStatement
+minParser = do
+    _ <- P.string "SELECT"
+    _ <- P.many P.space
+    _ <- P.string "MIN("
+    columns <- columnsListParser
+    _ <- P.string ")"
+    _ <- P.many P.space
+    _ <- P.string "FROM"
+    _ <- P.many P.space
+    tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
+    return $ SelectMin columns tablename
+    
+--task 3, MIN function with other columns, e.g.: SELECT MIN(id), surname FROM employees etc.
+    
+minWithOtherColumnsParser :: P.Parsec String () ParsedStatement
+minWithOtherColumnsParser = do
+    _ <- P.string "SELECT"
+    _ <- P.many P.space
+    _ <- P.string "MIN("
+    minCols <- columnsListParser
+    _ <- P.string ")"
+    _ <- P.many P.space
+    _ <- P.char ',' >> P.many P.space
+    otherCols <- columnsListParser
+    _ <- P.many P.space
+    _ <- P.string "FROM"
+    _ <- P.many P.space
+    tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
+    return $ SelectWithMin minCols otherCols tablename
 
 -- Parses user input into an entity representing a parsed statement
 parseStatement :: String -> Either ErrorMessage ParsedStatement
-parseStatement _ = Left "Not implemented: parseStatement"
--- parseStatement statement = case components of                         --sitos savo parasytos parseStatement dalies visiskai netestavau
---   last components /= ";" = Left "Missing ';' at the end"
---   length components == 2 -> if map toLowerCase y == "showtables" then Right StatementShowTables "showTables" else Left "Invalid query"
---   length components == 3 -> if map toLowerCase y == "showtable" then Right StatementShowTableName "showTableName" (head ys) else Left "Invalid query"
---   _ -> do --IDK
---   where
---     components = separateLastSemicolon . splitToComponents $ statement
---     y = head components
---     ys = tail components
-
--- Executes a parsed statemet. Produces a DataFrame. Uses
+parseStatement input
+    | "SELECT MIN(" `isPrefixOf` (map toUpper input) = 
+            case P.parse (P.try minWithOtherColumnsParser P.<|> minParser) "" input of
+                Left err -> Left $ "Parse Error: " ++ show err
+                Right stmt -> Right stmt
+    | "SELECT" `isPrefixOf` (map toUpper input) = 
+        case P.parse selectParser "" input of
+            Left err -> Left $ "Parse Error: " ++ show err
+            Right stmt -> Right stmt
+    | otherwise = Left "Invalid SQL command"
+        
+        
+--------------------------------------------------- Execute ----------------------------------------------------    
+    
+    
+-- Executes a parsed statement. Produces a DataFrame. Uses
 -- InMemoryTables.databases a source of data.
-executeStatement :: ParsedStatement -> Either ErrorMessage DataFrame
-executeStatement _ = Left "Not implemented: executeStatement"
+
+--execute for MIN function
+
+executeStatement :: ParsedStatement -> Database -> Either ErrorMessage DataFrame
+executeStatement (SelectMin columns tableName) db = 
+    case lookup tableName db of
+        Just (DataFrame allColumns allRows) -> 
+            let minValues = map (\column -> 
+                        let columnIndex = elemIndex column (map columnName allColumns) in
+                        case columnIndex of
+                            Just idx -> 
+                                let colValues = map (\row -> case row !! idx of 
+                                                                  StringValue str -> read str :: Int 
+                                                                  IntegerValue int -> fromIntegral int
+                                                                  _ -> error "Unsupported value type.") allRows
+                                    minValue = minimum colValues
+                                in IntegerValue (fromIntegral minValue)
+                            Nothing -> error $ "Column " ++ column ++ " not found") columns
+            in Right $ DataFrame (map (\c -> Column c IntegerType) columns) [minValues]
+        Nothing -> Left "Table not found"
+  
+--execute for SELECT column, column, ... FROM tablename (column list)        
+        
+executeStatement (SelectFrom selectedCols tableName) db = 
+    case lookup tableName db of
+        Just (DataFrame allColumns allRows) ->
+            let validIndices = mapMaybe (\col -> 
+                                         let colType = columnTypeByName col allColumns in
+                                         case colType of 
+                                             Just t -> elemIndex (Column col t) allColumns
+                                             Nothing -> Nothing) selectedCols
+                newRows = map (\row -> map (row !!) validIndices) allRows
+                newCols = map (allColumns !!) validIndices
+            in Right $ DataFrame newCols newRows
+        Nothing -> Left "Table not found"
+        
+--execute for MIN function and other columns, e.g.: SELECT MIN(column), column, column, ... FROM tablename
+        
+executeStatement (SelectWithMin minCols otherCols tableName) db = 
+    case lookup tableName db of
+        Just (DataFrame allColumns allRows) -> 
+            let minValues = map (\column -> 
+                        let columnIndex = elemIndex column (map columnName allColumns) in
+                        case columnIndex of
+                            Just idx -> 
+                                let colValues = map (\row -> case row !! idx of 
+                                                                  StringValue str -> read str :: Int 
+                                                                  IntegerValue int -> fromIntegral int
+                                                                  _ -> error "Unsupported value type.") allRows
+                                    minValue = minimum colValues
+                                in IntegerValue (fromIntegral minValue)
+                            Nothing -> error $ "Column " ++ column ++ " not found") minCols
+
+                -- Find the row with the minimum value for the minCols column
+                minRow = head $ filter (\row -> (case row !! (fromJust $ elemIndex (head minCols) (map columnName allColumns)) of
+                                                     IntegerValue int -> int == (case head minValues of
+                                                                                      IntegerValue minValue -> minValue
+                                                                                      _ -> error "Unexpected value type.")
+                                                     _ -> False)) allRows
+                otherValues = map (\col -> minRow !! (fromJust $ elemIndex col (map columnName allColumns))) otherCols
+                
+            in Right $ DataFrame (map (\c -> Column c IntegerType) minCols ++ map (\c -> Column c (fromJust $ columnTypeByName c allColumns)) otherCols) [minValues ++ otherValues]
+        Nothing -> Left "Table not found"
+        
+--execute for SELECT * FROM tablename        
+
+executeStatement (StatementSelectAll tableName) db = 
+    case lookup tableName db of
+        Just df -> Right df
+        Nothing -> Left "Table not found"
+
+executeStatement _ _ = Left "Statement not supported or invalid"
 
 
 -------------------------------------------------- helper functions -------------------------------------------------- 
+
 
 -- iterates through a string until reaches a specific element
 -- egz.:
@@ -76,8 +223,8 @@ separateElement (x:xs) a
 
 -- splits a query into words and separates commas
 -- egz.: 
--- splitToComponents "gass, grass,brass,,sash"
--- >> ["gass" "," "grass" "," "brass" "," "," "sash"]
+-- splitToComponents "grass, grass,brass,,sash"
+-- >> ["grass" "," "grass" "," "brass" "," "," "sash"]
 splitToComponents :: String -> [String]
 splitToComponents [] = []
 splitToComponents query = 
@@ -105,3 +252,25 @@ toLowerCase :: Char -> Char
 toLowerCase c
  | 'A' <= c && c <= 'Z' = toEnum (fromEnum c + 32)
  | otherwise = c
+ 
+columnName :: Column -> String
+columnName (Column name _) = name
+
+-- Extracts the type from a Column data structure
+columnType :: Column -> ColumnType
+columnType (Column _ t) = t
+
+elemAt :: Int -> [a] -> Maybe a
+elemAt idx xs
+  | idx < 0 || idx >= length xs = Nothing
+  | otherwise                   = Just (xs !! idx)
+  
+columnTypeByName :: String -> [Column] -> Maybe ColumnType
+columnTypeByName colName cols = columnType <$> find (\(Column name _) -> name == colName) cols
+  
+-- Test Functions
+testColumnNameParser :: String -> Either P.ParseError String
+testColumnNameParser = P.parse columnNameParser ""
+
+testColumnsListParser :: String -> Either P.ParseError [String]
+testColumnsListParser = P.parse columnsListParser ""
