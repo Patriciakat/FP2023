@@ -4,7 +4,9 @@
 module Lib2
   ( parseStatement,
     executeStatement,
-    ParsedStatement
+    ParsedStatement(..),
+    Condition(..),
+    ConditionValue(..)
   )
 where
 
@@ -289,76 +291,7 @@ executeStatement _ _ = Left "Statement not supported or invalid"
 
 
 -------------------------------------------------- helper functions -------------------------------------------------- 
-
-
--- iterates through a string until reaches a specific element
--- egz.:
--- iterateUntil "grabber hands" 'n'
--- >> "grabber ha"
--- note that it doesn't return the specified element on the end
-
---iterateUntil :: String -> Char -> [Char]
---iterateUntil [] _ = []
---iterateUntil (x:xs) a
---  |x /= a = x : iterateUntil xs a
---  |x == a = []
-
--- splits a string into words by using a specific element
--- egz.:
--- splitString "the quick brown     fox jumped     over the lazy dog" ' ' 
--- >> ["the","quick","brown","fox","jumped","over","the","lazy","dog"]
-
---splitString :: String -> Char -> [String]
---splitString [] _ = []
---splitString statement a
--- | head statement == a = (splitString . tail $ statement) a
--- | otherwise = (iterateUntil statement a) : splitString (drop ( (1 + ) . length $ iterateUntil statement a)  statement) a
-
--- separate a certain element from from string
--- egz.:
--- separateElement ",my,spoon,,is too,big," ','
--- >> ["," "my" "," "spoon" "," "," "is too" "," "big" ","]
-
---separateElement :: String -> Char -> [String]
---separateElement [] _ = []
---separateElement (x:xs) a 
--- | x == a = (x : []) : (separateElement xs a)
--- | elem a (x:xs) = (iterateUntil (x:xs) a) : (a : []) : separateElement (drop ( (1 + ) . length $ iterateUntil (x:xs) a)  (x:xs) ) a
--- | otherwise = (x:xs) : []
-
--- splits a query into words and separates commas
--- egz.: 
--- splitToComponents "grass, grass,brass,,sash"
--- >> ["grass" "," "grass" "," "brass" "," "," "sash"]
-
---splitToComponents :: String -> [String]
---splitToComponents [] = []
---splitToComponents query = 
---  let 
---    words = splitString query ' '
---    y = head words
---    ys = tail words
---
---    temp :: [String] -> [String]
---    temp [] = []
---    temp (x:[]) = separateElement x ','
---    temp (x:xs) = separateElement x ',' ++ temp xs
---  in 
---    separateElement y ',' ++ temp ys
-
--- separateElement but only separates ';' in the last word
--- separateLastSemicolon ["select","*","from","data;"]
--- >> ["select","*","from","data",";"]
-
---separateLastSemicolon :: [String] -> [String]
---separateLastSemicolon [] = []
---separateLastSemicolon (x : []) = separateElement x ';' ++ [] 
---separateLastSemicolon (x : xs) = x : separateLastSemicolon xs
---
---toLowerCase :: Char -> Char
---toLowerCase c
--- | 'A' <= c && c <= 'Z' = toEnum (fromEnum c + 32)
--- | otherwise = c
+ 
  
 columnName :: Column -> String
 columnName (Column name _) = name
