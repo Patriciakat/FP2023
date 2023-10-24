@@ -44,6 +44,24 @@ columnNameParser = P.many1 (P.alphaNum P.<|> P.char '_')
 columnsListParser :: P.Parsec String () [String]
 columnsListParser = columnNameParser `P.sepBy1` (P.char ',' >> P.many P.space)
 
+-- "SHOW TABLES"
+showTablesParser :: P.Parsec String () ParsedStatement
+showTablesParser = do
+    _ <- P.string "SHOW" <?> "SHOW keyword"
+    _ <- P.many P.space
+    _ <- P.string "TABLES" <?> "TABLES keyword"
+    return ShowTables
+
+-- "SHOW TABLE name"
+showTableParser :: P.Parsec String () ParsedStatement
+showTableParser = do
+    _ <- P.string "SHOW" <?> "SHOW keyword"
+    _ <- P.many P.space
+    _ <- P.string "TABLE" <?> "TABLE keyword"
+    _ <- P.many P.space
+    tableName <- P.many1 (P.alphaNum P.<|> P.char '_') <?> "Table name"
+    return $ ShowTable tableName
+    
 -- task 3, column list
     
 selectParser :: P.Parsec String () ParsedStatement
@@ -96,6 +114,10 @@ minWithOtherColumnsParser = do
 -- Parses user input into an entity representing a parsed statement
 parseStatement :: String -> Either ErrorMessage ParsedStatement
 parseStatement input
+    | "SHOW" `isPrefixOf` (map toUpper input) = 
+            case P.parse (P.try showTablesParser P.<|> showTableParser) "" input of
+                Left err -> Left $ "Parse Error: " ++ show err
+                Right stmt -> Right stmt
     | "SELECT MIN(" `isPrefixOf` (map toUpper input) = 
             case P.parse (P.try minWithOtherColumnsParser P.<|> minParser) "" input of
                 Left err -> Left $ "Parse Error: " ++ show err
@@ -109,13 +131,24 @@ parseStatement input
         
 --------------------------------------------------- Execute ----------------------------------------------------    
     
-    
 -- Executes a parsed statement. Produces a DataFrame. Uses
 -- InMemoryTables.databases a source of data.
 
---execute for MIN function
-
+-- execute for "SHOW TABLES"
 executeStatement :: ParsedStatement -> Database -> Either ErrorMessage DataFrame
+executeStatement ShowTables db = 
+    let tableNames = map fst db 
+    in Right $ DataFrame [Column "Tables" StringType] (map (\name -> [StringValue name]) tableNames)
+
+-- execute for "SHOW TABLE name"
+executeStatement (ShowTable tableName) db = 
+    case lookup tableName db of
+        Just (DataFrame columns _) -> 
+            let columnNames = map columnName columns
+            in Right $ DataFrame [Column "Columns" StringType] (map (\name -> [StringValue name]) columnNames)
+        Nothing -> Left "Table not found"
+
+--execute for MIN function        
 executeStatement (SelectMin columns tableName) db = 
     case lookup tableName db of
         Just (DataFrame allColumns allRows) -> 
