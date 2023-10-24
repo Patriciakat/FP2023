@@ -101,22 +101,28 @@ main = hspec $ do
     -- Invalid cases
     
     it "select from a non-existent table" $ do
-        Lib2.parseStatement "select * from non_existent_table" `shouldNotBe` Right (Lib2.StatementSelectAll "non_existent_table")
+        let statement = Lib2.parseStatement "select * from non_existent_table"
+        case statement of
+            Right stmt -> Lib2.executeStatement stmt D.database `shouldSatisfy` isLeft
+            _ -> fail "Parsing failed."
     
     it "select a column with non-matching condition" $ do
-        Lib2.parseStatement "select name from employees where id=9999" `shouldNotBe` Right (Lib2.SelectWithConditions ["name"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 9999)])
+        Lib2.parseStatement "select name from employees where id=9999" `shouldBe` Right (Lib2.SelectWithConditions ["name"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 9999)])
     
     it "select MIN on a non-integer column" $ do
-        Lib2.parseStatement "select min(surname) from employees" `shouldNotBe` Right (Lib2.SelectMin ["surname"] "employees")
+        Lib2.parseStatement "select min(surname) from employees" `shouldBe` Right (Lib2.SelectMin ["surname"] "employees")
     
     it "select from another non-existent table" $ do
-        Lib2.parseStatement "select text1 from non_existent_table" `shouldNotBe` Right (Lib2.SelectFrom ["text1"] "non_existent_table")
+        let statement = Lib2.parseStatement "select text1 from non_existent_table"
+        case statement of
+            Right stmt -> Lib2.executeStatement stmt D.database `shouldSatisfy` isLeft
+            _ -> fail "Parsing failed."
     
     it "malformed select with extra comma" $ do
         Lib2.parseStatement "select text1, from long_strings" `shouldNotBe` Right (Lib2.SelectFrom ["text1"] "long_strings")
     
     it "select with non-matching WHERE condition" $ do
-        Lib2.parseStatement "select id, surname from employees where name=\"nonExistingName\"" `shouldNotBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "name" (Lib2.StringConditionValue "nonExistingName")])
+        Lib2.parseStatement "select id, surname from employees where name=\"nonExistingName\"" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "name" (Lib2.StringConditionValue "nonExistingName")])
     
     it "select with single quotes instead of double quotes" $ do
         Lib2.parseStatement "select id, surname from employees where name='Vi'" `shouldNotBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "name" (Lib2.StringConditionValue "Vi")])    
