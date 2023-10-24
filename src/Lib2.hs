@@ -40,6 +40,7 @@ data ParsedStatement
 -- Features:
 -- - Basic column selection (e.g., SELECT column1, column2 FROM table)
 -- - Wildcard selection (e.g., SELECT * FROM table)
+-- - Column list, MIN function with/without columns, AVG function
 
 columnNameParser :: P.Parsec String () String
 columnNameParser = P.many1 (P.alphaNum P.<|> P.char '_')
@@ -313,10 +314,3 @@ caseInsensitiveString :: String -> P.Parsec String () String
 caseInsensitiveString s = P.try (mapM caseInsensitiveChar s)
     where
         caseInsensitiveChar c = P.char (toLower c) P.<|> P.char (toUpper c)
-  
--- Test Functions
-testColumnNameParser :: String -> Either P.ParseError String
-testColumnNameParser = P.parse columnNameParser ""
-
-testColumnsListParser :: String -> Either P.ParseError [String]
-testColumnsListParser = P.parse columnsListParser ""
