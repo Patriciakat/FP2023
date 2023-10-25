@@ -30,6 +30,7 @@ compareValueToType :: Value -> ColumnType -> Bool
 compareValueToType (IntegerValue _) IntegerType = True
 compareValueToType (StringValue _) StringType = True
 compareValueToType (BoolValue _) BoolType = True
+compareValueToType (FloatValue _) FloatType = True  -- This line is added to handle FloatValue.
 compareValueToType NullValue _ = True
 compareValueToType _ _ = False
 
@@ -89,7 +90,6 @@ validateDataFrame (DataFrame columns rows)
       
                 
 
-
 -- 4) implement the function which renders a given data frame
 -- as ascii-art table (use your imagination, there is no "correct"
 -- answer for this task!), it should respect terminal
@@ -111,6 +111,7 @@ valueToString :: Value -> String
 valueToString (IntegerValue i) = show i
 valueToString (StringValue s) = s
 valueToString (BoolValue b) = show b
+valueToString (FloatValue f) = show f  -- Handle the FloatValue case
 valueToString NullValue = "NULL"
 
 -- Calculate the width for each column

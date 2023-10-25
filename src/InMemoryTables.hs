@@ -19,7 +19,9 @@ tableEmployees =
     DataFrame
       [Column "id" IntegerType, Column "name" StringType, Column "surname" StringType]
       [ [IntegerValue 1, StringValue "Vi", StringValue "Po"],
-        [IntegerValue 2, StringValue "Ed", StringValue "Dl"]
+        [IntegerValue 2, StringValue "Ed", StringValue "Dl"],
+        [IntegerValue 3, StringValue "Ed", StringValue "Tr"],
+        [IntegerValue 3, StringValue "Ag", StringValue "Pt"]
       ]
   )
 
