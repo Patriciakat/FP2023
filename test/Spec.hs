@@ -4,6 +4,7 @@ import InMemoryTables qualified as D
 import Lib1
 import Lib2
 import Test.Hspec
+import Lib2 (DataFrame(..), Value(..))
 
 --Lib1.hs tests
 
@@ -41,6 +42,35 @@ main = hspec $ do
 --Lib2.hs tests
       
   describe "Lib2.parseStatement" $ do
+  
+    it "parses SHOW TABLES statement" $ do
+      Lib2.parseStatement "SHOW TABLES" `shouldBe` Right Lib2.ShowTables
+
+    it "shows all tables in the database" $ do
+        let statement = Lib2.parseStatement "SHOW TABLES"
+        case statement of
+            Right stmt -> do
+                let result = Lib2.executeStatement stmt D.database
+                case result of
+                    Right (DataFrame _ rows) -> 
+                        (map (\[StringValue s] -> s) rows) `shouldBe` ["employees", "invalid1", "invalid2", "long_strings", "flags"]
+                    Left err -> fail ("Execution error: " ++ err)
+            Left _ -> fail "Parsing failed."
+    
+    it "parses SHOW TABLE name statement" $ do
+      Lib2.parseStatement "SHOW TABLE employees" `shouldBe` Right (Lib2.ShowTable "employees")
+    
+    it "shows columns of specific table" $ do
+        let statement = Lib2.parseStatement "SHOW TABLE employees"
+        case statement of
+            Right stmt -> do
+                let result = Lib2.executeStatement stmt D.database
+                case result of
+                    Right (DataFrame _ rows) ->
+                        (map (\[StringValue s] -> s) rows) `shouldBe` ["id", "name", "surname"]
+                    Left err -> fail ("Execution error: " ++ err)
+            Left _ -> fail "Parsing failed."
+            
     it "parses single column select" $ do
       Lib2.parseStatement "select id from employees" `shouldBe` Right (Lib2.SelectFrom ["id"] "employees")
   
@@ -99,7 +129,16 @@ main = hspec $ do
         Lib2.parseStatement "select min(id), name, surname from employees where name=\"Ed\"" `shouldBe` Right (Lib2.SelectWithMin ["id"] ["name", "surname"] "employees")
         
     -- Invalid cases
-    
+    it "shows an error for a table that not exist" $ do
+        let statement = Lib2.parseStatement "SHOW TABLE nonexistent_table"
+        case statement of
+            Right stmt -> do
+                let result = Lib2.executeStatement stmt D.database
+                case result of
+                    Right _ -> fail "Expected an error but got a successful result."
+                    Left err -> err `shouldBe` "Table not found"
+            Left _ -> fail "Parsing failed."
+            
     it "select from a non-existent table" $ do
         let statement = Lib2.parseStatement "select * from non_existent_table"
         case statement of
@@ -125,4 +164,4 @@ main = hspec $ do
         Lib2.parseStatement "select id, surname from employees where name=\"nonExistingName\"" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "name" (Lib2.StringConditionValue "nonExistingName")])
     
     it "select with single quotes instead of double quotes" $ do
-        Lib2.parseStatement "select id, surname from employees where name='Vi'" `shouldNotBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "name" (Lib2.StringConditionValue "Vi")])    
+        Lib2.parseStatement "select id, surname from employees where name='Vi'" `shouldNotBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "name" (Lib2.StringConditionValue "Vi")])

@@ -6,7 +6,9 @@ module Lib2
     executeStatement,
     ParsedStatement(..),
     Condition(..),
-    ConditionValue(..)
+    ConditionValue(..),
+    DataFrame(..), 
+    Value(..)
   )
 where
 
