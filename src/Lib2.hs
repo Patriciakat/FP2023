@@ -23,6 +23,9 @@ type ErrorMessage = String
 type Database = [(TableName, DataFrame)]
 
 -- Keep the type, modify constructors
+
+--------------------------------------------------- Data models ----------------------------------------------
+
 data ParsedStatement
     = ShowTables
     | ShowTable TableName
@@ -36,10 +39,8 @@ data ParsedStatement
     | StatementSelectAll { database :: String }
     deriving (Show, Eq)
  
---data Condition = EqualsCondition String Value  deriving (Show, Eq)
 data Condition = EqualsCondition String ConditionValue  deriving (Show, Eq)
 
---data Value = IntegerValue Int | StringValue String deriving (Show, Eq)
 data ConditionValue = IntegerConditionValue Int | StringConditionValue String deriving (Show, Eq)
     
 --------------------------------------------------- Parser ----------------------------------------------------
@@ -48,22 +49,25 @@ data ConditionValue = IntegerConditionValue Int | StringConditionValue String de
 -- Features:
 -- - Basic column selection (e.g., SELECT column1, column2 FROM table)
 -- - Wildcard selection (e.g., SELECT * FROM table)
--- - Column list, MIN function with/without columns, AVG function
+-- - SHOW TABLES, SHOW TABLE <tablename>
+-- - Column list, MIN function with/without columns, AVG function, WHERE with AND
 
--- "SHOW TABLES"
+-- task 1, "SHOW TABLES"
+
 showTablesParser :: P.Parsec String () ParsedStatement
 showTablesParser = do
-    _ <- P.string "SHOW" <?> "SHOW keyword"
+    _ <- caseInsensitiveString "SHOW" <?> "SHOW keyword"
     _ <- P.many P.space
-    _ <- P.string "TABLES" <?> "TABLES keyword"
+    _ <- caseInsensitiveString "TABLES" <?> "TABLES keyword"
     return ShowTables
 
--- "SHOW TABLE name"
+-- task 2, "SHOW TABLE name"
+
 showTableParser :: P.Parsec String () ParsedStatement
 showTableParser = do
-    _ <- P.string "SHOW" <?> "SHOW keyword"
+    _ <- caseInsensitiveString "SHOW" <?> "SHOW keyword"
     _ <- P.many P.space
-    _ <- P.string "TABLE" <?> "TABLE keyword"
+    _ <- caseInsensitiveString "TABLE" <?> "TABLE keyword"
     _ <- P.many P.space
     tableName <- P.many1 (P.alphaNum P.<|> P.char '_') <?> "Table name"
     return $ ShowTable tableName
