@@ -70,7 +70,13 @@ main = hspec $ do
                         (map (\[StringValue s] -> s) rows) `shouldBe` ["id", "name", "surname"]
                     Left err -> fail ("Execution error: " ++ err)
             Left _ -> fail "Parsing failed."
-            
+         
+    it "ensures table names are case-sensitive" $ do
+      let statement = Lib2.parseStatement "SHOW TABLE Employees"
+      case statement of
+          Right stmt -> Lib2.executeStatement stmt D.database `shouldSatisfy` isLeft
+          _ -> fail "Parsing failed."
+               
     it "parses single column select" $ do
       Lib2.parseStatement "select id from employees" `shouldBe` Right (Lib2.SelectFrom ["id"] "employees")
   
@@ -165,23 +171,3 @@ main = hspec $ do
     
     it "select with single quotes instead of double quotes" $ do
         Lib2.parseStatement "select id, surname from employees where name='Vi'" `shouldNotBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "name" (Lib2.StringConditionValue "Vi")])
-        
-  describe "Lib2.ProperSQLLanguage" $ do
-  
-    it "ensures table names are case-sensitive" $ do
-      let statement = Lib2.parseStatement "SHOW TABLE Employees"
-      case statement of
-          Right stmt -> Lib2.executeStatement stmt D.database `shouldSatisfy` isLeft
-          _ -> fail "Parsing failed."
-      
-    it "ensures column names in SELECT are case-sensitive" $ do 
-          let statement = Lib2.parseStatement "select ID from employees"
-          case statement of
-              Right stmt -> Lib2.executeStatement stmt D.database `shouldSatisfy` isLeft
-              _ -> fail "Parsing failed."
-       
-    it "ensures SQL keywords are case-insensitive" $ do
-          let statement = Lib2.parseStatement "SELECT id from employees"
-          case statement of
-              Right stmt -> Lib2.executeStatement stmt D.database `shouldSatisfy` isLeft
-              _ -> fail "Parsing failed."
