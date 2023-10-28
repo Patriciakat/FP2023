@@ -41,11 +41,18 @@ data ParsedStatement
     | StatementSelectAll { database :: String }
     deriving (Show, Eq)
  
-data Condition = EqualsCondition String ConditionValue  deriving (Show, Eq)
+data Condition
+    = EqualsCondition String ConditionValue
+    | NotEqualsCondition String ConditionValue
+    | GreaterThanCondition String ConditionValue
+    | LessThanCondition String ConditionValue
+    | GreaterThanOrEqualCondition String ConditionValue
+    | LessThanOrEqualCondition String ConditionValue
+    deriving (Show, Eq)
 
 data ConditionValue = IntegerConditionValue Int | StringConditionValue String deriving (Show, Eq)
     
---------------------------------------------------- Parser ----------------------------------------------------
+--------------------------------------------------- Parsers ----------------------------------------------------
 
 
 -- Features:
@@ -145,15 +152,67 @@ avgParser = do
     return $ SelectAvg columns tablename
     
 --task 3, WHERE with AND, e.g.: SELECT id, surname FROM employees WHERE id=1 AND name="Vi" (AND is not required, and it still works)
+--task 3, WHERE int =/</>/<=/>=/!=, e.g.: SELECT id, name, surname WHERE name="Ed" AND id (=/</>/<=/>=/!=) <some_number>
 
 conditionParser :: P.Parsec String () Condition
-conditionParser = do
-    column <- columnNameParser
-    _ <- P.many P.space
-    _ <- P.char '='
-    _ <- P.many P.space
-    value <- valueParser
-    return $ EqualsCondition column value
+conditionParser = P.choice
+    [ P.try tryNotEqualsCondition
+    , P.try tryEqualsCondition
+    , P.try tryGreaterThanCondition
+    , P.try tryLessThanCondition
+    , P.try tryGreaterThanOrEqualCondition
+    , P.try tryLessThanOrEqualCondition
+    ]
+    
+  where
+    tryLessThanCondition = do
+        column <- columnNameParser
+        _ <- P.many P.space
+        _ <- P.string "<"
+        _ <- P.many P.space
+        value <- valueParser
+        return $ LessThanCondition column value
+
+    tryEqualsCondition = do
+        column <- columnNameParser
+        _ <- P.many P.space
+        _ <- P.string "="
+        _ <- P.many P.space
+        value <- valueParser
+        return $ EqualsCondition column value
+
+    tryNotEqualsCondition = do
+        column <- columnNameParser
+        _ <- P.many P.space
+        _ <- P.string "!="
+        _ <- P.many P.space
+        value <- valueParser
+        return $ NotEqualsCondition column value
+
+    tryGreaterThanCondition = do
+        column <- columnNameParser
+        _ <- P.many P.space
+        _ <- P.string ">"
+        _ <- P.many P.space
+        value <- valueParser
+        return $ GreaterThanCondition column value
+
+    tryGreaterThanOrEqualCondition = do
+        column <- columnNameParser
+        _ <- P.many P.space
+        _ <- P.string ">="
+        _ <- P.many P.space
+        value <- valueParser
+        return $ GreaterThanOrEqualCondition column value
+
+    tryLessThanOrEqualCondition = do
+        column <- columnNameParser
+        _ <- P.many P.space
+        _ <- P.string "<="
+        _ <- P.many P.space
+        value <- valueParser
+        return $ LessThanOrEqualCondition column value
+
     
 valueParser :: P.Parsec String () ConditionValue
 valueParser = P.try (P.many1 P.digit >>= \digits -> return $ IntegerConditionValue (read digits))
@@ -195,7 +254,7 @@ parseStatement input
     | otherwise = Left "Invalid SQL command"
       
         
---------------------------------------------------- Execute ----------------------------------------------------    
+--------------------------------------------------- Executes ----------------------------------------------------    
     
     
 -- Executes a parsed statement. Produces a DataFrame. Uses
@@ -301,26 +360,26 @@ executeStatement (SelectAvg columns tableName) db =
         
 --execute for WHERE with AND
 
-executeStatement (SelectWithConditions selectedCols tablename conditions) db = 
+executeStatement (SelectWithConditions selectedCols tablename conditions) db =
     case lookup tablename db of
         Just df -> do
             let dfWithConditionsApplied = applyConditions conditions df
             let DataFrame allColumns allRows = dfWithConditionsApplied
 
             -- If selectedCols is "*", select all columns
-            let finalSelectedCols = if selectedCols == ["*"] 
-                                    then map (\(Column name _) -> name) allColumns 
+            let finalSelectedCols = if selectedCols == ["*"]
+                                    then map (\(Column name _) -> name) allColumns
                                     else selectedCols
-            
+
             -- Extract only the columns specified in the SELECT statement
-            let validIndices = mapMaybe (\col -> 
+            let validIndices = mapMaybe (\col ->
                                          let colType = columnTypeByName col allColumns in
-                                         case colType of 
+                                         case colType of
                                              Just t -> elemIndex (Column col t) allColumns
                                              Nothing -> Nothing) finalSelectedCols
             let newRows = map (\row -> map (row !!) validIndices) allRows
             let newCols = map (allColumns !!) validIndices
-            
+
             Right $ DataFrame newCols newRows
         Nothing -> Left "Table not found"
         
@@ -334,9 +393,16 @@ executeStatement (StatementSelectAll tableName) db =
 executeStatement _ _ = Left "Statement not supported or invalid"
 
 
--------------------------------------------------- helper functions -------------------------------------------------- 
+-------------------------------------------------- Helper functions -------------------------------------------------- 
  
- 
+instance Ord Value where
+    compare (IntegerValue int1) (IntegerValue int2) = compare int1 int2
+    compare (StringValue str1) (StringValue str2) = compare str1 str2
+
+convertConditionValueToValue :: ConditionValue -> Value
+convertConditionValueToValue (IntegerConditionValue int) = IntegerValue (toInteger int)
+convertConditionValueToValue (StringConditionValue str) = StringValue str
+
 columnName :: Column -> String
 columnName (Column name _) = name
 
@@ -366,23 +432,41 @@ meetAllConditions :: [Column] -> [Condition] -> Row -> Bool
 meetAllConditions columns conditions row = all (\cond -> meetCondition columns cond row) conditions
 
 meetCondition :: [Column] -> Condition -> Row -> Bool
-meetCondition columns (EqualsCondition colName condValue) row = 
+meetCondition columns (EqualsCondition colName condValue) row =
     case elemIndex colName (map columnName columns) of
         Just idx -> (row !! idx) == convertConditionValueToValue condValue
         Nothing -> False
-  where
-    convertValue :: Value -> ConditionValue
-    convertValue (IntegerValue int) = IntegerConditionValue (fromIntegral int)
-    convertValue (StringValue str) = StringConditionValue str
-    
-    convertConditionValueToValue :: ConditionValue -> Value
-    convertConditionValueToValue (IntegerConditionValue int) = IntegerValue (fromIntegral int)
-    convertConditionValueToValue (StringConditionValue str) = StringValue str
-        
+
+-- conditions functions for WHERE int =/</>/<=/>=/!=
+
+meetCondition columns (NotEqualsCondition colName condValue) row =
+    case elemIndex colName (map columnName columns) of
+        Just idx -> (row !! idx) /= convertConditionValueToValue(condValue)
+        Nothing -> False
+
+meetCondition columns (GreaterThanCondition colName condValue) row =
+    case elemIndex colName (map columnName columns) of
+        Just idx -> (row !! idx) > convertConditionValueToValue condValue
+        Nothing -> False
+
+meetCondition columns (LessThanCondition colName condValue) row =
+    case elemIndex colName (map columnName columns) of
+        Just idx -> (row !! idx) < convertConditionValueToValue condValue
+        Nothing -> False
+
+meetCondition columns (GreaterThanOrEqualCondition colName condValue) row =
+    case elemIndex colName (map columnName columns) of
+        Just idx -> (row !! idx) >= convertConditionValueToValue condValue
+        Nothing -> False
+
+meetCondition columns (LessThanOrEqualCondition colName condValue) row =
+    case elemIndex colName (map columnName columns) of
+        Just idx -> (row !! idx) <= convertConditionValueToValue condValue
+        Nothing -> False
+
 -- helper function for case insensitiveness for all sql keywords: select, from, min, avg, where, etc.
 
 caseInsensitiveString :: String -> P.Parsec String () String
 caseInsensitiveString s = P.try (mapM caseInsensitiveChar s)
     where
         caseInsensitiveChar c = P.char (toLower c) P.<|> P.char (toUpper c)
-        
