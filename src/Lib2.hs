@@ -52,7 +52,7 @@ data Condition
 
 data ConditionValue = IntegerConditionValue Int | StringConditionValue String deriving (Show, Eq)
     
---------------------------------------------------- Parser ----------------------------------------------------
+--------------------------------------------------- Parsers ----------------------------------------------------
 
 
 -- Features:
@@ -152,16 +152,18 @@ avgParser = do
     return $ SelectAvg columns tablename
     
 --task 3, WHERE with AND, e.g.: SELECT id, surname FROM employees WHERE id=1 AND name="Vi" (AND is not required, and it still works)
+--task 3, WHERE int =/</>/<=/>=/!=, e.g.: SELECT id, name, surname WHERE name="Ed" AND id (=/</>/<=/>=/!=) <some_number>
 
 conditionParser :: P.Parsec String () Condition
 conditionParser = P.choice
-    [ tryEqualsCondition
-    , tryNotEqualsCondition
-    , tryGreaterThanCondition
-    , tryLessThanCondition
-    , tryGreaterThanOrEqualCondition
-    , tryLessThanOrEqualCondition
+    [ P.try tryNotEqualsCondition
+    , P.try tryEqualsCondition
+    , P.try tryGreaterThanCondition
+    , P.try tryLessThanCondition
+    , P.try tryGreaterThanOrEqualCondition
+    , P.try tryLessThanOrEqualCondition
     ]
+    
   where
     tryLessThanCondition = do
         column <- columnNameParser
@@ -252,7 +254,7 @@ parseStatement input
     | otherwise = Left "Invalid SQL command"
       
         
---------------------------------------------------- Execute ----------------------------------------------------    
+--------------------------------------------------- Executes ----------------------------------------------------    
     
     
 -- Executes a parsed statement. Produces a DataFrame. Uses
@@ -391,7 +393,7 @@ executeStatement (StatementSelectAll tableName) db =
 executeStatement _ _ = Left "Statement not supported or invalid"
 
 
--------------------------------------------------- helper functions -------------------------------------------------- 
+-------------------------------------------------- Helper functions -------------------------------------------------- 
  
 instance Ord Value where
     compare (IntegerValue int1) (IntegerValue int2) = compare int1 int2
@@ -435,6 +437,8 @@ meetCondition columns (EqualsCondition colName condValue) row =
         Just idx -> (row !! idx) == convertConditionValueToValue condValue
         Nothing -> False
 
+-- conditions functions for WHERE int =/</>/<=/>=/!=
+
 meetCondition columns (NotEqualsCondition colName condValue) row =
     case elemIndex colName (map columnName columns) of
         Just idx -> (row !! idx) /= convertConditionValueToValue(condValue)
@@ -460,11 +464,9 @@ meetCondition columns (LessThanOrEqualCondition colName condValue) row =
         Just idx -> (row !! idx) <= convertConditionValueToValue condValue
         Nothing -> False
 
-        
 -- helper function for case insensitiveness for all sql keywords: select, from, min, avg, where, etc.
 
 caseInsensitiveString :: String -> P.Parsec String () String
 caseInsensitiveString s = P.try (mapM caseInsensitiveChar s)
     where
         caseInsensitiveChar c = P.char (toLower c) P.<|> P.char (toUpper c)
-        
