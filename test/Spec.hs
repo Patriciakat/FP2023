@@ -134,7 +134,42 @@ main = hspec $ do
     it "select MIN with other columns and WHERE condition" $ do
         Lib2.parseStatement "select min(id), name, surname from employees where name=\"Ed\"" `shouldBe` Right (Lib2.SelectWithMin ["id"] ["name", "surname"] "employees")
         
-    -- Invalid cases
+    describe "test =, !=, >, <, >=, <=:" $ do
+      describe "select with conditions for one column:" $ do
+        it "SELECT _ FROM (=)" $ do
+          Lib2.parseStatement "Select surname from employees where id=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ FROM (!=)" $ do
+          Lib2.parseStatement "Select surname from employees where id!=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.NotEqualsCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ FROM (>)" $ do
+          Lib2.parseStatement "Select surname from employees where id>2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.GreaterThanCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ FROM (<)" $ do
+          Lib2.parseStatement "Select surname from employees where id<2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.LessThanCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ FROM (>=)" $ do
+          Lib2.parseStatement "Select surname from employees where id>=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.GreaterThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ FROM (<=)" $ do
+          Lib2.parseStatement "Select surname from employees where id<=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.LessThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
+      describe "select with conditions for multiple columns:" $ do
+        it "SELECT _ _ _ FROM (=)" $ do
+          Lib2.parseStatement "Select id, surname, name from employees where id=2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ _ _ FROM (!=)" $ do
+          Lib2.parseStatement "Select id, surname, name from employees where id!=2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.NotEqualsCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ _ _ FROM (>)" $ do
+          Lib2.parseStatement "Select id, surname, name from employees where id>2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.GreaterThanCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ _ _ FROM (<)" $ do
+          Lib2.parseStatement "Select id, surname, name from employees where id<2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.LessThanCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ _ _ FROM (>=)" $ do
+          Lib2.parseStatement "Select id, surname, name from employees where id>=2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.GreaterThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
+        it "SELECT _ _ _ FROM (<=)" $ do
+          Lib2.parseStatement "Select id, surname, name from employees where id<=2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.LessThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
+      describe "select with conditions with AND:" $ do
+        it "SELECT _ FROM (=) AND (!=)" $ do
+          Lib2.parseStatement "Select surname from employees where id=2 and id!=1" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 2), Lib2.NotEqualsCondition "id" (Lib2.IntegerConditionValue 1)])
+        it "SELECT _ FROM (<) AND (>)" $ do
+          Lib2.parseStatement "Select surname from employees where id>1 and id<3" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.GreaterThanCondition "id" (Lib2.IntegerConditionValue 1), Lib2.LessThanCondition "id" (Lib2.IntegerConditionValue 3)])
+        it "SELECT _ FROM (<=) AND (>=)" $ do
+          Lib2.parseStatement "Select surname from employees where id>=1 and id<=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.GreaterThanOrEqualCondition "id" (Lib2.IntegerConditionValue 1), Lib2.LessThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
+        
+          -- Invalid cases
     it "shows an error for a table that not exist" $ do
         let statement = Lib2.parseStatement "SHOW TABLE nonexistent_table"
         case statement of
