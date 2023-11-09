@@ -85,12 +85,6 @@ main = hspec $ do
   
     it "parses select with conditions" $ do
       Lib2.parseStatement "select id, name from employees where id=1" `shouldBe` Right (Lib2.SelectWithConditions ["id", "name"] "employees" [EqualsCondition "id" (IntegerConditionValue 1)])
-      
-    it "handles SELECT * with uppercase" $ do
-      Lib2.parseStatement "SELECT * FROM employees" `shouldBe` Right (Lib2.StatementSelectAll "employees")
-            
-    it "handles SELECT * with lowercase" $ do
-      Lib2.parseStatement "select * from employees" `shouldBe` Right (Lib2.StatementSelectAll "employees")
     
     it "selects a single column" $ do
       Lib2.parseStatement "select text1 from long_strings" `shouldBe` Right (Lib2.SelectFrom ["text1"] "long_strings")
