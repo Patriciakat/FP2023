@@ -4,7 +4,7 @@
 module Lib2
   ( parseStatement,
     executeStatement,
-    ParsedStatement(..),
+    MyParsedStatement(..),
     Condition(..),
     ConditionValue(..),
     DataFrame(..), 
@@ -12,7 +12,9 @@ module Lib2
   )
 where
 
+import InMemoryTables
 import DataFrame
+import DataFrame (DataFrame, Column, ColumnType (..), Value (..))
 import InMemoryTables (TableName)
 import Lib1 (renderDataFrameAsTable)
 import qualified Text.Parsec as P
@@ -28,7 +30,7 @@ type Database = [(TableName, DataFrame)]
 
 --------------------------------------------------- Data models ----------------------------------------------
 
-data ParsedStatement
+data MyParsedStatement
     = ShowTables
     | ShowTable TableName
     | SelectFrom { selectedColumns :: [String], fromTable :: TableName }
@@ -63,7 +65,7 @@ data ConditionValue = IntegerConditionValue Int | StringConditionValue String de
 
 -- task 1, "SHOW TABLES"
 
-showTablesParser :: P.Parsec String () ParsedStatement
+showTablesParser :: P.Parsec String () MyParsedStatement
 showTablesParser = do
     _ <- caseInsensitiveString "SHOW" <?> "SHOW keyword"
     _ <- P.many P.space
@@ -72,7 +74,7 @@ showTablesParser = do
 
 -- task 2, "SHOW TABLE name"
 
-showTableParser :: P.Parsec String () ParsedStatement
+showTableParser :: P.Parsec String () MyParsedStatement
 showTableParser = do
     _ <- caseInsensitiveString "SHOW" <?> "SHOW keyword"
     _ <- P.many P.space
@@ -83,7 +85,7 @@ showTableParser = do
 
 -- task 3, column list
     
-selectParser :: P.Parsec String () ParsedStatement
+selectParser :: P.Parsec String () MyParsedStatement
 selectParser = do
     _ <- caseInsensitiveString "SELECT"
     _ <- P.many P.space
@@ -92,8 +94,8 @@ selectParser = do
                         _ <- P.many P.space
                         _ <- caseInsensitiveString "FROM"
                         _ <- P.many P.space
-                        tablename <- P.many1 (P.alphaNum P.<|> P.char '_')
-                        return $ StatementSelectAll tablename)
+                        tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
+                        return $ SelectFrom (getColumnNamesForTable tableName) tableName) -- Use getColumnNamesForTable to get column names
                   P.<|> (do
                         cols <- columnsListParser
                         _ <- P.many P.space
@@ -105,7 +107,7 @@ selectParser = do
         
 --task 3, MIN function
         
-minParser :: P.Parsec String () ParsedStatement
+minParser :: P.Parsec String () MyParsedStatement
 minParser = do
     _ <- caseInsensitiveString "SELECT"
     _ <- P.many P.space
@@ -120,7 +122,7 @@ minParser = do
     
 --task 3, MIN function with other columns, e.g.: SELECT MIN(id), surname FROM employees etc.
     
-minWithOtherColumnsParser :: P.Parsec String () ParsedStatement
+minWithOtherColumnsParser :: P.Parsec String () MyParsedStatement
 minWithOtherColumnsParser = do
     _ <- caseInsensitiveString "SELECT"
     _ <- P.many P.space
@@ -138,7 +140,7 @@ minWithOtherColumnsParser = do
     
 --task 3, AVG function
 
-avgParser :: P.Parsec String () ParsedStatement
+avgParser :: P.Parsec String () MyParsedStatement
 avgParser = do
     _ <- caseInsensitiveString "SELECT"
     _ <- P.many P.space
@@ -218,7 +220,7 @@ valueParser :: P.Parsec String () ConditionValue
 valueParser = P.try (P.many1 P.digit >>= \digits -> return $ IntegerConditionValue (read digits))
          P.<|> (P.char '"' >> P.manyTill P.anyChar (P.char '"') >>= \str -> return $ StringConditionValue str)
          
-selectWithWhereParser :: P.Parsec String () ParsedStatement
+selectWithWhereParser :: P.Parsec String () MyParsedStatement
 selectWithWhereParser = do
     selectStmt <- selectParser  -- Use the select parser you already have
     _ <- P.many P.space
@@ -229,7 +231,7 @@ selectWithWhereParser = do
 
 
 -- Parses user input into an entity representing a parsed statement
-parseStatement :: String -> Either ErrorMessage ParsedStatement
+parseStatement :: String -> Either ErrorMessage MyParsedStatement
 parseStatement input
     | "SHOW" `isPrefixOf` (map toUpper input) = 
                 case P.parse (P.try showTablesParser P.<|> showTableParser) "" input of
@@ -263,7 +265,7 @@ parseStatement input
 
 -- execute for "SHOW TABLES"
 
-executeStatement :: ParsedStatement -> Database -> Either ErrorMessage DataFrame
+executeStatement :: MyParsedStatement -> [(TableName, DataFrame)] -> Either ErrorMessage DataFrame
 executeStatement ShowTables db = 
     let tableNames = map fst db 
     in Right $ DataFrame [Column "Tables" StringType] (map (\name -> [StringValue name]) tableNames)
@@ -405,6 +407,15 @@ convertConditionValueToValue (StringConditionValue str) = StringValue str
 
 columnName :: Column -> String
 columnName (Column name _) = name
+
+getColumnNamesForTable :: TableName -> [String]
+getColumnNamesForTable tableName =
+    case lookup tableName InMemoryTables.database of
+        Just df -> map columnName (columns1 df)
+        Nothing -> []
+        
+columns1 :: DataFrame -> [Column]
+columns1 (DataFrame cols _) = cols
 
 -- extracts the type from a Column data structure
 columnType :: Column -> ColumnType
