@@ -3,6 +3,9 @@
 module DataFrame (Column (..), ColumnType (..), Value (..), Row, DataFrame (..)) where
 
 import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (Parser, typeMismatch, withObject, (.:), (.=), withArray)
+import qualified Data.Vector as V
+import Control.Applicative ((<|>))
 
 data ColumnType
   = IntegerType
@@ -27,7 +30,7 @@ type Row = [Value]
 data DataFrame = DataFrame [Column] [Row]
   deriving (Show, Eq)
 
--- Here are your ToJSON instances
+-- ToJSON instances
 instance Aeson.ToJSON ColumnType where
   toJSON IntegerType = Aeson.String "IntegerType"
   toJSON StringType  = Aeson.String "StringType"
@@ -46,3 +49,45 @@ instance Aeson.ToJSON Value where
 
 instance Aeson.ToJSON DataFrame where
   toJSON (DataFrame columns rows) = Aeson.object ["columns" Aeson..= columns, "rows" Aeson..= rows]
+  
+-- FromJSON instances
+instance Aeson.FromJSON DataFrame where
+  parseJSON = withObject "DataFrame" $ \obj -> do
+    columns <- obj .: "columns"
+    rows    <- obj .: "rows"
+    parsedRows <- mapM parseRow (V.toList rows)
+    return $ DataFrame columns parsedRows
+    where
+      parseRow :: Aeson.Value -> Parser Row
+      parseRow = withArray "Row" $ \arr ->
+        mapM parseValue (V.toList arr)
+
+      parseValue :: Aeson.Value -> Parser Value
+      parseValue val = case val of
+        Aeson.Object obj -> parseComplexValue obj
+        _                -> typeMismatch "Value" val
+        
+instance Aeson.FromJSON Column where
+  parseJSON = withObject "Column" $ \obj -> do
+    name <- obj .: "name"
+    columnType <- obj .: "type"
+    return $ Column name columnType
+    
+instance Aeson.FromJSON ColumnType where
+  parseJSON = Aeson.withText "ColumnType" $ \t -> case t of
+    "IntegerType" -> return IntegerType
+    "StringType"  -> return StringType
+    "BoolType"    -> return BoolType
+    "FloatType"   -> return FloatType
+    _             -> fail "Invalid ColumnType"
+
+parseComplexValue :: Aeson.Object -> Parser Value
+parseComplexValue obj = 
+    (IntegerValue <$> obj .: "IntegerValue") <|>
+    (StringValue <$> obj .: "StringValue") <|>
+    (BoolValue <$> obj .: "BoolValue") <|>
+    (FloatValue <$> obj .: "FloatValue") <|>
+    parseNullValue obj
+  where
+    parseNullValue :: Aeson.Object -> Parser Value
+    parseNullValue o = if Aeson.Null `elem` o then return NullValue else fail "Expected a Value"

@@ -46,6 +46,8 @@ library:
     - transformers
     - aeson
     - bytestring
+    - vector
+    - directory
 
 executables:
   fp2023-select-all:
@@ -63,6 +65,8 @@ executables:
     - parsec
     - aeson
     - bytestring
+    - vector
+    - directory
   fp2023-select-more:
     main:                Main.hs
     source-dirs:         app2
@@ -78,6 +82,8 @@ executables:
     - parsec
     - aeson
     - bytestring
+    - vector
+    - directory
   fp2023-manipulate:
     main:                Main.hs
     source-dirs:         app3
@@ -95,6 +101,8 @@ executables:
     - parsec
     - aeson
     - bytestring
+    - vector
+    - directory
     
 
 tests:
@@ -111,3 +119,5 @@ tests:
     - parsec
     - aeson
     - bytestring
+    - vector
+    - directory
