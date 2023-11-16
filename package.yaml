@@ -44,6 +44,8 @@ library:
     - free
     - time
     - transformers
+    - aeson
+    - bytestring
 
 executables:
   fp2023-select-all:
@@ -59,6 +61,8 @@ executables:
     - repline
     - terminal-size
     - parsec
+    - aeson
+    - bytestring
   fp2023-select-more:
     main:                Main.hs
     source-dirs:         app2
@@ -72,6 +76,8 @@ executables:
     - repline
     - terminal-size
     - parsec
+    - aeson
+    - bytestring
   fp2023-manipulate:
     main:                Main.hs
     source-dirs:         app3
@@ -87,6 +93,8 @@ executables:
     - free
     - time
     - parsec
+    - aeson
+    - bytestring
     
 
 tests:
@@ -101,3 +109,5 @@ tests:
     - fp2023
     - hspec
     - parsec
+    - aeson
+    - bytestring

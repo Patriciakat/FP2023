@@ -2,21 +2,19 @@ module Main (main) where
 
 import Control.Monad.IO.Class (MonadIO (liftIO))
 import Control.Monad.Free (Free (..))
-
-import Data.Functor((<&>))
-import Data.Time ( UTCTime, getCurrentTime )
+import Data.Functor ((<&>))
+import Data.Time (UTCTime, getCurrentTime)
 import Data.List qualified as L
+import System.Console.Repline
+import System.Console.Terminal.Size
+import qualified Data.ByteString.Lazy as B
+
 import Lib1 qualified
 import Lib2 qualified
 import Lib3 qualified
-import System.Console.Repline
-  ( CompleterStyle (Word),
-    ExitDecision (Exit),
-    HaskelineT,
-    WordCompleter,
-    evalRepl,
-  )
-import System.Console.Terminal.Size (Window, size, width)
+import Lib3 (serializeDataFrame, Execution, executeSql)
+import DataFrame
+import InMemoryTables (tableEmployees, tableInvalid1, tableInvalid2, tableLongStrings, tableWithNulls)
 
 type Repl a = HaskelineT IO a
 
@@ -53,16 +51,26 @@ cmd c = do
       df <- runExecuteIO $ Lib3.executeSql c 
       return $ Lib1.renderDataFrameAsTable s <$> df
 
+-- Function to serialize all tables on startup
+serializeTables :: IO ()
+serializeTables = do
+  let tables = [tableEmployees, tableInvalid1, tableInvalid2, tableLongStrings, tableWithNulls]
+  mapM_ (\(name, df) -> B.writeFile ("db/" ++ name ++ ".json") (serializeDataFrame df)) tables
+
 main :: IO ()
-main =
+main = do
+  serializeTables  -- Call this function to serialize all tables on startup
   evalRepl (const $ pure ">>> ") cmd [] Nothing Nothing (Word completer) ini final
 
+-- Your existing runExecuteIO function with addition for SaveFile
 runExecuteIO :: Lib3.Execution r -> IO r
 runExecuteIO (Pure r) = return r
 runExecuteIO (Free step) = do
     next <- runStep step
     runExecuteIO next
     where
-        -- probably you will want to extend the interpreter
         runStep :: Lib3.ExecutionAlgebra a -> IO a
         runStep (Lib3.GetTime next) = getCurrentTime >>= return . next
+        runStep (Lib3.SaveFile tableName content next) = do
+            B.writeFile ("db/" ++ tableName ++ ".json") content
+            return next
