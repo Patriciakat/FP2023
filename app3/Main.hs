@@ -44,26 +44,24 @@ completer n = return $ Prelude.filter (L.isPrefixOf n) commands
 -- Command evaluation for the REPL
 cmd :: AppState -> String -> Repl ()
 cmd appState commandString = do
-  s <- terminalWidth <$> liftIO size
-  let parsedCommand = Lib2.parseStatement commandString
-  case parsedCommand of
-    Right statement -> do
-      result <- liftIO $ executeCommand statement appState
-      case result of
-        Right df -> liftIO $ putStrLn $ Lib1.renderDataFrameAsTable s df
-        Left errorMsg -> liftIO $ putStrLn $ "Error: " ++ errorMsg
-    Left errorMsg -> liftIO $ putStrLn $ "Error parsing SQL: " ++ errorMsg
-  where
-    terminalWidth :: Integral n => Maybe (Window n) -> n
-    terminalWidth = maybe 80 width
+    s <- terminalWidth <$> liftIO size
+    let parsedCommand = Lib2.parseStatement commandString
+    case parsedCommand of
+        Right statement -> do
+            result <- liftIO $ executeCommand commandString appState
+            case result of
+                Right df -> liftIO $ putStrLn $ Lib1.renderDataFrameAsTable s df
+                Left errorMsg -> liftIO $ putStrLn $ "Error: " ++ errorMsg
+        Left errorMsg -> liftIO $ putStrLn $ "Error parsing SQL: " ++ errorMsg
+    where
+        terminalWidth :: Integral n => Maybe (Window n) -> n
+        terminalWidth = maybe 80 width
 
-    executeCommand :: Lib2.MyParsedStatement -> AppState -> IO (Either String DataFrame)
-    executeCommand statement state = do
-      -- Here, you will need to handle different types of SQL commands
-      -- For example, handling for Lib2.Insert would go here
-      -- You will also need to update the AppState and persist the changes to JSON if needed
-      -- For now, it returns a placeholder error message
-      return $ Left "Command execution not yet implemented"
+        executeCommand :: String -> AppState -> IO (Either String DataFrame)
+        executeCommand sql state = do
+            -- Run the Execution monad with the current database state
+            result <- runExecuteIO $ Lib3.executeSql sql (appDatabase state)
+            return result
 
 -- Initialize the state of the application from JSON files
 initializeState :: IO (Maybe AppState)
@@ -78,8 +76,12 @@ initializeState = do
       if fileExists
         then do
           maybeDf <- Lib3.readDataFrame file
-          return $ fmap ((,) name) maybeDf
-        else do
+          case maybeDf of
+            Just df -> return $ Just (name, df)
+            Nothing -> useDefaultTable name
+        else useDefaultTable name
+      where
+        useDefaultTable name = do
           let Just defaultTable = lookup name InMemoryTables.database
           B.writeFile file $ Lib3.serializeDataFrame defaultTable
           return $ Just (name, defaultTable)

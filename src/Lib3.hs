@@ -6,13 +6,14 @@ module Lib3
     Execution,
     ExecutionAlgebra(..),
     serializeDataFrame,
-    deserializeDataFrame,  -- Ensure this is defined and exported
-    readDataFrameFile,     -- Custom function to read a DataFrame from a file within the Execution monad
-    readDataFrame,         -- Standard IO function for reading a DataFrame from a file
+    deserializeDataFrame,
+    readDataFrameFile,
+    readDataFrame,
     saveDataFrame,
   )
 where
 
+import qualified Lib2
 import Control.Monad.Free (Free (..), liftF)
 import DataFrame (DataFrame)
 import Data.Aeson (encode, decode)
@@ -25,45 +26,41 @@ type ErrorMessage = String
 
 data ExecutionAlgebra next
   = LoadFile TableName (FileContent -> next)
-  | SaveFile TableName FileContent next  -- SaveFile expects a ByteString which is FileContent
-  | ReadFile FilePath (Maybe DataFrame -> next)  -- Add a constructor for reading a file into a DataFrame
+  | SaveFile TableName FileContent next
+  | ReadFile FilePath (Maybe DataFrame -> next)
   | GetTime (UTCTime -> next)
   deriving (Functor)
 
 type Execution = Free ExecutionAlgebra
 
-loadFile :: TableName -> Execution FileContent
-loadFile name = liftF $ LoadFile name id
+-- Function to execute SQL commands
+executeSql :: String -> [(TableName, DataFrame)] -> Execution (Either ErrorMessage DataFrame)
+executeSql sql db = do
+    currentTime <- getTime  -- Get current time within the Execution monad
+    return $ case Lib2.parseStatement sql of
+        Right statement -> Lib2.executeStatement statement db
+        Left errorMsg -> Left errorMsg
 
--- Function to read a DataFrame from a JSON file within the Execution
-readDataFrameFile :: FilePath -> Execution (Maybe DataFrame)
-readDataFrameFile filePath = liftF $ ReadFile filePath id
+-------------------------------------------- Serialization functions----------------------------------------------------
 
-getTime :: Execution UTCTime
-getTime = liftF $ GetTime id
-
-executeSql :: String -> Execution (Either ErrorMessage DataFrame)
-executeSql sql = do
-    return $ Left "implement me"
-
------------------------------------------------------- Data Serialization to JSON format ----------------------------------------------
-
--- Function to serialize a DataFrame to JSON ByteString
 serializeDataFrame :: DataFrame -> B.ByteString
 serializeDataFrame = encode
 
--- Adds an action to the Execution to save a DataFrame
 saveDataFrame :: TableName -> DataFrame -> Execution ()
 saveDataFrame tableName df = liftF $ SaveFile tableName (serializeDataFrame df) ()
+  
+-------------------------------------------- Deserialization functions--------------------------------------------------
 
------------------------------------------------------- Data (De)serialization from JSON format ----------------------------------------
-
--- Function to deserialize a JSON ByteString back to a DataFrame
 deserializeDataFrame :: B.ByteString -> Maybe DataFrame
 deserializeDataFrame = decode
 
--- Function to read a DataFrame from a JSON file
+readDataFrameFile :: FilePath -> Execution (Maybe DataFrame)
+readDataFrameFile filePath = liftF $ ReadFile filePath id
+
 readDataFrame :: FilePath -> IO (Maybe DataFrame)
 readDataFrame filePath = do
-  jsonContent <- B.readFile filePath  -- Read the file content as a ByteString
+  jsonContent <- B.readFile filePath
   return (deserializeDataFrame jsonContent)
+
+getTime :: Execution UTCTime
+getTime = liftF $ GetTime id
