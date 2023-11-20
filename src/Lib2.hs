@@ -4,6 +4,9 @@
 module Lib2
   ( parseStatement,
     executeStatement,
+    convertConditionValueToValue,
+    meetAllConditions,
+    isValidType,
     MyParsedStatement(..),
     Condition(..),
     ConditionValue(..),
@@ -40,6 +43,8 @@ data MyParsedStatement
     | SelectWithConditions { selectedColumns :: [String], fromTable :: TableName, conditions :: [Condition] }
     | StatementWithFilters { columns :: [String], database :: String, filters :: [String] }
     | StatementWithoutFilters { columns :: [String], database :: String }
+    | DeleteFrom { fromTable :: TableName, conditions :: [Condition] }
+    | InsertInto { intoTable :: TableName, insertValues :: [Value] }
     | StatementSelectAll { database :: String }
     deriving (Show, Eq)
  
@@ -95,7 +100,9 @@ selectParser = do
                         _ <- caseInsensitiveString "FROM"
                         _ <- P.many P.space
                         tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
-                        return $ SelectFrom (getColumnNamesForTable tableName) tableName) -- Use getColumnNamesForTable to get column names
+                        case getColumnNamesForTable tableName of
+                            Right cols -> return $ SelectFrom cols tableName
+                            Left err   -> fail err)
                   P.<|> (do
                         cols <- columnsListParser
                         _ <- P.many P.space
@@ -156,6 +163,17 @@ avgParser = do
 --task 3, WHERE with AND, e.g.: SELECT id, surname FROM employees WHERE id=1 AND name="Vi" (AND is not required, and it still works)
 --task 3, WHERE int =/</>/<=/>=/!=, e.g.: SELECT id, name, surname WHERE name="Ed" AND id (=/</>/<=/>=/!=) <some_number>
 
+convertValueToConditionValue :: Value -> ConditionValue
+convertValueToConditionValue (IntegerValue int) = IntegerConditionValue (fromIntegral int)
+convertValueToConditionValue (StringValue str) = StringConditionValue str
+-- Add cases for other Value types if necessary
+
+valueParser :: P.Parsec String () Value
+valueParser = P.try (P.many1 P.digit >>= \digits -> return $ IntegerValue (read digits))
+         P.<|> (P.between (P.char '\'') (P.char '\'') (P.many (P.noneOf "'")) >>= \str -> return $ StringValue str)
+         -- Add handling for single quotes and other types if necessary
+        
+
 conditionParser :: P.Parsec String () Condition
 conditionParser = P.choice
     [ P.try tryNotEqualsCondition
@@ -167,58 +185,59 @@ conditionParser = P.choice
     ]
     
   where
-    tryLessThanCondition = do
-        column <- columnNameParser
-        _ <- P.many P.space
-        _ <- P.string "<"
-        _ <- P.many P.space
-        value <- valueParser
-        return $ LessThanCondition column value
-
     tryEqualsCondition = do
         column <- columnNameParser
         _ <- P.many P.space
         _ <- P.string "="
         _ <- P.many P.space
         value <- valueParser
-        return $ EqualsCondition column value
-
+        let condValue = convertValueToConditionValue value
+        return $ EqualsCondition column condValue
+    
     tryNotEqualsCondition = do
         column <- columnNameParser
         _ <- P.many P.space
         _ <- P.string "!="
         _ <- P.many P.space
         value <- valueParser
-        return $ NotEqualsCondition column value
-
+        let condValue = convertValueToConditionValue value
+        return $ NotEqualsCondition column condValue
+    
     tryGreaterThanCondition = do
         column <- columnNameParser
         _ <- P.many P.space
         _ <- P.string ">"
         _ <- P.many P.space
         value <- valueParser
-        return $ GreaterThanCondition column value
-
+        let condValue = convertValueToConditionValue value
+        return $ GreaterThanCondition column condValue
+    
     tryGreaterThanOrEqualCondition = do
         column <- columnNameParser
         _ <- P.many P.space
         _ <- P.string ">="
         _ <- P.many P.space
         value <- valueParser
-        return $ GreaterThanOrEqualCondition column value
-
+        let condValue = convertValueToConditionValue value
+        return $ GreaterThanOrEqualCondition column condValue
+    
+    tryLessThanCondition = do
+        column <- columnNameParser
+        _ <- P.many P.space
+        _ <- P.string "<"
+        _ <- P.many P.space
+        value <- valueParser
+        let condValue = convertValueToConditionValue value
+        return $ LessThanCondition column condValue
+    
     tryLessThanOrEqualCondition = do
         column <- columnNameParser
         _ <- P.many P.space
         _ <- P.string "<="
         _ <- P.many P.space
         value <- valueParser
-        return $ LessThanOrEqualCondition column value
-
-    
-valueParser :: P.Parsec String () ConditionValue
-valueParser = P.try (P.many1 P.digit >>= \digits -> return $ IntegerConditionValue (read digits))
-         P.<|> (P.char '"' >> P.manyTill P.anyChar (P.char '"') >>= \str -> return $ StringConditionValue str)
+        let condValue = convertValueToConditionValue value
+        return $ LessThanOrEqualCondition column condValue
          
 selectWithWhereParser :: P.Parsec String () MyParsedStatement
 selectWithWhereParser = do
@@ -228,6 +247,40 @@ selectWithWhereParser = do
     _ <- P.many P.space
     conditions <- conditionParser `P.sepBy1` (P.many P.space >> caseInsensitiveString "AND" >> P.many P.space)
     return $ SelectWithConditions (selectedColumns selectStmt) (fromTable selectStmt) conditions
+    
+-- Delete Parser
+    
+deleteParser :: P.Parsec String () MyParsedStatement
+deleteParser = do
+    _ <- caseInsensitiveString "DELETE"
+    _ <- P.many P.space
+    _ <- caseInsensitiveString "FROM"
+    _ <- P.many P.space
+    tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
+    _ <- P.many P.space
+    _ <- caseInsensitiveString "WHERE"
+    _ <- P.many P.space
+    conditions <- conditionParser `P.sepBy1` (P.many P.space >> caseInsensitiveString "AND" >> P.many P.space)
+    return $ DeleteFrom tableName conditions
+    
+-- Insert Parser
+    
+insertParser :: P.Parsec String () MyParsedStatement
+insertParser = do
+    _ <- caseInsensitiveString "INSERT INTO"
+    _ <- P.many P.space
+    tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
+    _ <- P.many P.space
+    _ <- P.char '('
+    columns <- columnsListParser
+    _ <- P.char ')'
+    _ <- P.many P.space
+    _ <- caseInsensitiveString "VALUES"
+    _ <- P.many P.space
+    _ <- P.char '('
+    values <- valueParser `P.sepBy` (P.char ',' >> P.many P.space)
+    _ <- P.char ')'
+    return $ InsertInto tableName values -- This should probably be updated to include columns as well
 
 
 -- Parses user input into an entity representing a parsed statement
@@ -237,6 +290,14 @@ parseStatement input
                 case P.parse (P.try showTablesParser P.<|> showTableParser) "" input of
                     Left err -> Left $ "Parse Error: " ++ show err
                     Right stmt -> Right stmt
+    | "DELETE" `isPrefixOf` (map toUpper input) =
+            case P.parse deleteParser "" input of
+                Left err -> Left $ "Parse Error: " ++ show err
+                Right stmt -> Right stmt
+    | "INSERT INTO" `isPrefixOf` (map toUpper input) =
+        case P.parse insertParser "" input of
+            Left err -> Left $ "Parse Error: " ++ show err
+            Right stmt -> Right stmt
     | "SELECT AVG(" `isPrefixOf` (map toUpper input) = 
         case P.parse avgParser "" input of
             Left err -> Left $ "Parse Error: " ++ show err
@@ -385,6 +446,20 @@ executeStatement (SelectWithConditions selectedCols tablename conditions) db =
             Right $ DataFrame newCols newRows
         Nothing -> Left "Table not found"
         
+--execute for insert
+
+executeStatement (InsertInto tableName values) db = 
+    case lookup tableName db of
+        Just (DataFrame columns rows) -> 
+            if length values /= length columns then
+                Left "The number of values does not match the number of columns"
+            else if not $ all isValidType (zip columns values) then
+                Left "Type mismatch between values and columns"
+            else
+                let newRow = values
+                in Right $ DataFrame columns (newRow : rows)
+        Nothing -> Left "Table not found"
+        
 --execute for SELECT * FROM tablename
 
 executeStatement (StatementSelectAll tableName) db = 
@@ -408,11 +483,11 @@ convertConditionValueToValue (StringConditionValue str) = StringValue str
 columnName :: Column -> String
 columnName (Column name _) = name
 
-getColumnNamesForTable :: TableName -> [String]
+getColumnNamesForTable :: TableName -> Either ErrorMessage [String]
 getColumnNamesForTable tableName =
     case lookup tableName InMemoryTables.database of
-        Just df -> map columnName (columns1 df)
-        Nothing -> []
+        Just df -> Right $ map columnName (columns1 df)
+        Nothing -> Left "Table not found"
         
 columns1 :: DataFrame -> [Column]
 columns1 (DataFrame cols _) = cols
@@ -433,6 +508,26 @@ elemAt idx xs
   
 columnTypeByName :: String -> [Column] -> Maybe ColumnType
 columnTypeByName colName cols = columnType <$> find (\(Column name _) -> name == colName) cols
+
+tryLessThanCondition :: P.Parsec String () Condition
+tryLessThanCondition = do
+    column <- columnNameParser
+    _ <- P.many P.space
+    _ <- P.string "<"
+    _ <- P.many P.space
+    value <- valueParser
+    let condValue = convertValueToConditionValue value
+    return $ LessThanCondition column condValue
+
+-- Helper function to check if the provided value matches the column type
+isValidType :: (Column, Value) -> Bool
+isValidType (Column _ colType, val) =
+    case (colType, val) of
+        (IntegerType, IntegerValue _) -> True
+        (StringType, StringValue _)   -> True
+        (BoolType, BoolValue _)       -> True
+        (FloatType, FloatValue _)     -> True
+        _                             -> False
 
 -- helper functions for WHERE with AND
 

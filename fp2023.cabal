@@ -41,10 +41,12 @@ library
       aeson
     , base >=4.7 && <5
     , bytestring
+    , directory
     , free
     , parsec
     , time
     , transformers
+    , vector
   default-language: Haskell2010
 
 executable fp2023-manipulate
@@ -60,6 +62,7 @@ executable fp2023-manipulate
       aeson
     , base >=4.7 && <5
     , bytestring
+    , directory
     , extra
     , fp2023
     , free
@@ -67,6 +70,7 @@ executable fp2023-manipulate
     , repline
     , terminal-size
     , time
+    , vector
   default-language: Haskell2010
 
 executable fp2023-select-all
@@ -82,11 +86,13 @@ executable fp2023-select-all
       aeson
     , base >=4.7 && <5
     , bytestring
+    , directory
     , extra
     , fp2023
     , parsec
     , repline
     , terminal-size
+    , vector
   default-language: Haskell2010
 
 executable fp2023-select-more
@@ -102,11 +108,13 @@ executable fp2023-select-more
       aeson
     , base >=4.7 && <5
     , bytestring
+    , directory
     , extra
     , fp2023
     , parsec
     , repline
     , terminal-size
+    , vector
   default-language: Haskell2010
 
 test-suite fp2023-test
@@ -123,7 +131,9 @@ test-suite fp2023-test
       aeson
     , base >=4.7 && <5
     , bytestring
+    , directory
     , fp2023
     , hspec
     , parsec
+    , vector
   default-language: Haskell2010
