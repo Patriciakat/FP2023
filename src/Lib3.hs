@@ -69,14 +69,32 @@ executeSql sql db = do
             return $ executeStatement otherStatement db
 
         Left errorMsg -> return $ Left errorMsg
+        
+-- Function to run the Execution monad
+runExecuteIO :: Execution r -> IO r
+runExecuteIO (Pure r) = return r
+runExecuteIO (Free step) = do
+    next <- runStep step
+    runExecuteIO next
 
 -- Serialization function for DataFrame
 serializeDataFrame :: DataFrame -> B.ByteString
 serializeDataFrame = encode
 
--- Function to save DataFrame to a file
+-- Function to save DataFrame to a file, ensuring proper file handling
 saveDataFrame :: TableName -> DataFrame -> Execution ()
 saveDataFrame tableName df = liftF $ SaveFile tableName (serializeDataFrame df) ()
+
+-- Function to actually write the serialized data to a file
+-- Ensures file is properly opened, written to, and closed
+writeDataFrameToFile :: TableName -> B.ByteString -> IO ()
+writeDataFrameToFile tableName content = 
+  B.writeFile ("db/" ++ tableName ++ ".json") content
+  
+runStep :: ExecutionAlgebra a -> IO a
+runStep (SaveFile tableName content next) = do
+    writeDataFrameToFile tableName content
+    return next
   
 -- Deserialization function for DataFrame
 deserializeDataFrame :: B.ByteString -> Maybe DataFrame
@@ -100,8 +118,8 @@ deleteFromTable tableName conditions = do
     let maybeCurrentDF = deserializeDataFrame fileContent
     case maybeCurrentDF of
         Just currentDF -> do
-            let updatedDF = deleteRows currentDF conditions  -- Corrected here
-            saveDataFrame tableName updatedDF
+            let updatedDF = deleteRows currentDF conditions
+            saveDataFrame tableName updatedDF -- Add this line to save the updated DataFrame
             return $ Right updatedDF
         Nothing -> return $ Left "Error: Table data could not be loaded."
 
