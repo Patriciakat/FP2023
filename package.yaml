@@ -48,6 +48,8 @@ library:
     - bytestring
     - vector
     - directory
+    - text
+    - unordered-containers >= 0.2.19.1
 
 executables:
   fp2023-select-all:
@@ -67,6 +69,8 @@ executables:
     - bytestring
     - vector
     - directory
+    - text
+    - unordered-containers >= 0.2.19.1
   fp2023-select-more:
     main:                Main.hs
     source-dirs:         app2
@@ -84,6 +88,8 @@ executables:
     - bytestring
     - vector
     - directory
+    - text
+    - unordered-containers >= 0.2.19.1
   fp2023-manipulate:
     main:                Main.hs
     source-dirs:         app3
@@ -103,6 +109,8 @@ executables:
     - bytestring
     - vector
     - directory
+    - text
+    - unordered-containers >= 0.2.19.1
     
 
 tests:
@@ -121,3 +129,5 @@ tests:
     - bytestring
     - vector
     - directory
+    - text
+    - unordered-containers >= 0.2.19.1

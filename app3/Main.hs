@@ -68,7 +68,7 @@ loadTable name file = do
       maybeDf <- Lib3.readDataFrame file
       return $ Just (name, fromMaybe (getDefaultTable name) maybeDf)
     else do
-      let defaultTable = getDefaultTable name -- Move this line to the top level
+      let defaultTable = getDefaultTable name
       B.writeFile file $ Lib3.serializeDataFrame defaultTable
       return $ Just (name, defaultTable)
 
@@ -101,7 +101,6 @@ executeCommand sql state = do
     result <- runExecuteIO $ Lib3.executeSql sql
     case result of
         Right df -> do
-            -- Refresh state after every command
             updatedState <- refreshState state
             return (Right df, updatedState)
         Left errorMsg -> return (Left errorMsg, state)

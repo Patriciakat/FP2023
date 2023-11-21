@@ -44,8 +44,10 @@ library
     , directory
     , free
     , parsec
+    , text
     , time
     , transformers
+    , unordered-containers >=0.2.19.1
     , vector
   default-language: Haskell2010
 
@@ -69,7 +71,9 @@ executable fp2023-manipulate
     , parsec
     , repline
     , terminal-size
+    , text
     , time
+    , unordered-containers >=0.2.19.1
     , vector
   default-language: Haskell2010
 
@@ -92,6 +96,8 @@ executable fp2023-select-all
     , parsec
     , repline
     , terminal-size
+    , text
+    , unordered-containers >=0.2.19.1
     , vector
   default-language: Haskell2010
 
@@ -114,6 +120,8 @@ executable fp2023-select-more
     , parsec
     , repline
     , terminal-size
+    , text
+    , unordered-containers >=0.2.19.1
     , vector
   default-language: Haskell2010
 
@@ -135,5 +143,7 @@ test-suite fp2023-test
     , fp2023
     , hspec
     , parsec
+    , text
+    , unordered-containers >=0.2.19.1
     , vector
   default-language: Haskell2010

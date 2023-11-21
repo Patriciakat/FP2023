@@ -24,6 +24,8 @@ import Data.Aeson (encode, decode)
 import Data.Char (toUpper, toLower)
 import Data.List (findIndex, isPrefixOf, isInfixOf, elemIndex, find)
 import Data.Maybe (isJust, mapMaybe, catMaybes, fromJust)
+import System.Directory (listDirectory)
+import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as B
 
 type ErrorMessage = String
@@ -38,6 +40,8 @@ data MyParsedStatement
     | SelectWithMin { minColumns :: [String], otherColumns :: [String], fromTable :: TableName }
     | SelectAvg { columns :: [String], fromTable :: TableName }
     | SelectWithConditions { selectedColumns :: [String], fromTable :: TableName, conditions :: [Condition] }
+    | ShowTables
+    | ShowTable TableName
     | DeleteFrom { fromTable :: TableName, conditions :: [Condition] }
     | SelectAll { fromTable :: TableName }
     deriving (Show, Eq)
@@ -56,6 +60,20 @@ data ConditionValue = IntegerConditionValue Int | StringConditionValue String de
     
 --------------------------------------------------- Parsers ----------------------------------------------------
 
+
+-- Show tables, show table {tableName}
+
+showTablesParser :: P.Parsec String () MyParsedStatement
+showTablesParser = do
+    _ <- caseInsensitiveString "SHOW TABLES"
+    return ShowTables
+
+showTableParser :: P.Parsec String () MyParsedStatement
+showTableParser = do
+    _ <- caseInsensitiveString "SHOW TABLE"
+    _ <- P.many P.space
+    tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
+    return $ ShowTable tableName
 
 -- task 3, column list
     
@@ -231,6 +249,14 @@ deleteParser = do
 -- Parses user input into an entity representing a parsed statement
 parseStatement :: String -> Either ErrorMessage MyParsedStatement
 parseStatement input
+    | "SHOW TABLES" `isPrefixOf` map toUpper input = 
+            case P.parse showTablesParser "" input of
+                Left err -> Left $ "Parse Error: " ++ show err
+                Right stmt -> Right stmt
+    | "SHOW TABLE " `isPrefixOf` map toUpper input = 
+            case P.parse showTableParser "" input of
+                Left err -> Left $ "Parse Error: " ++ show err
+                Right stmt -> Right stmt
     | "DELETE FROM" `isPrefixOf` (map toUpper input) = 
             case P.parse deleteParser "" input of
                 Left err -> Left $ "Parse Error: " ++ show err
@@ -373,6 +399,22 @@ executeStatement (SelectWithConditions selectedCols tableName conditions) = do
             then return $ Left "No rows found matching the conditions"
             else return $ Right $ DataFrame newCols newRows
         Nothing -> return $ Left "Table not found"
+        
+--execute for show table and show table {tableName}
+
+executeStatement ShowTables = do
+    files <- listDirectory "db"
+    let tables = map (takeWhile (/= '.')) files  -- Removes file extensions
+    let rows = map (\t -> [StringValue t]) tables  -- Wrap table names in `StringValue`
+    return $ Right $ DataFrame [Column "Tables" StringType] rows
+    
+executeStatement (ShowTable tableName) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
+        Just (DataFrame columns _) -> do
+            let schemaInfo = map (\(Column name ctype) -> [StringValue name, StringValue (show ctype)]) columns
+            return $ Right $ DataFrame [Column "Column Name" StringType, Column "Type" StringType] schemaInfo
+        Nothing -> return $ Left $ "Table " ++ tableName ++ " not found"
      
 --execute for delete
 
@@ -485,9 +527,13 @@ caseInsensitiveString s = P.try (mapM caseInsensitiveChar s)
         
 readDataFrame :: FilePath -> IO (Maybe DataFrame)
 readDataFrame fileName = do
-  let filePath = "db/" ++ fileName -- Prefix the file name with the directory
+  let filePath = "db/" ++ fileName
   jsonContent <- B.readFile filePath
-  return $ decode jsonContent
+  case eitherDecode jsonContent of
+    Right df -> return $ Just df
+    Left err -> do
+      putStrLn $ "Decoding JSON failed for file: " ++ fileName ++ " with error: " ++ err
+      return Nothing
   
 saveDataFrame :: TableName -> DataFrame -> IO ()
 saveDataFrame tableName df = do
