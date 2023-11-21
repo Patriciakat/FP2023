@@ -15,37 +15,31 @@ module Lib2
   )
 where
 
-import InMemoryTables
 import DataFrame
 import DataFrame (DataFrame, Column, ColumnType (..), Value (..))
-import InMemoryTables (TableName)
 import Lib1 (renderDataFrameAsTable)
 import qualified Text.Parsec as P
 import Text.Parsec ((<?>))
+import Data.Aeson (encode, decode)
 import Data.Char (toUpper, toLower)
-import Data.List (isPrefixOf, isInfixOf, elemIndex, find)
+import Data.List (findIndex, isPrefixOf, isInfixOf, elemIndex, find)
 import Data.Maybe (isJust, mapMaybe, catMaybes, fromJust)
+import qualified Data.ByteString.Lazy as B
 
 type ErrorMessage = String
+type TableName = String
 type Database = [(TableName, DataFrame)]
-
--- Keep the type, modify constructors
 
 --------------------------------------------------- Data models ----------------------------------------------
 
 data MyParsedStatement
-    = ShowTables
-    | ShowTable TableName
-    | SelectFrom { selectedColumns :: [String], fromTable :: TableName }
+    = SelectFrom { selectedColumns :: [String], fromTable :: TableName }
     | SelectMin { columns :: [String], fromTable :: TableName }
     | SelectWithMin { minColumns :: [String], otherColumns :: [String], fromTable :: TableName }
     | SelectAvg { columns :: [String], fromTable :: TableName }
     | SelectWithConditions { selectedColumns :: [String], fromTable :: TableName, conditions :: [Condition] }
-    | StatementWithFilters { columns :: [String], database :: String, filters :: [String] }
-    | StatementWithoutFilters { columns :: [String], database :: String }
     | DeleteFrom { fromTable :: TableName, conditions :: [Condition] }
-    | InsertInto { intoTable :: TableName, insertValues :: [Value] }
-    | StatementSelectAll { database :: String }
+    | SelectAll { fromTable :: TableName }
     deriving (Show, Eq)
  
 data Condition
@@ -59,34 +53,9 @@ data Condition
 
 data ConditionValue = IntegerConditionValue Int | StringConditionValue String deriving (Show, Eq)
     
+    
 --------------------------------------------------- Parsers ----------------------------------------------------
 
-
--- Features:
--- - Basic column selection (e.g., SELECT column1, column2 FROM table)
--- - Wildcard selection (e.g., SELECT * FROM table)
--- - SHOW TABLES, SHOW TABLE <tablename>
--- - Column list, MIN function with/without columns, AVG function, WHERE with AND
-
--- task 1, "SHOW TABLES"
-
-showTablesParser :: P.Parsec String () MyParsedStatement
-showTablesParser = do
-    _ <- caseInsensitiveString "SHOW" <?> "SHOW keyword"
-    _ <- P.many P.space
-    _ <- caseInsensitiveString "TABLES" <?> "TABLES keyword"
-    return ShowTables
-
--- task 2, "SHOW TABLE name"
-
-showTableParser :: P.Parsec String () MyParsedStatement
-showTableParser = do
-    _ <- caseInsensitiveString "SHOW" <?> "SHOW keyword"
-    _ <- P.many P.space
-    _ <- caseInsensitiveString "TABLE" <?> "TABLE keyword"
-    _ <- P.many P.space
-    tableName <- P.many1 (P.alphaNum P.<|> P.char '_') <?> "Table name"
-    return $ ShowTable tableName
 
 -- task 3, column list
     
@@ -100,9 +69,7 @@ selectParser = do
                         _ <- caseInsensitiveString "FROM"
                         _ <- P.many P.space
                         tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
-                        case getColumnNamesForTable tableName of
-                            Right cols -> return $ SelectFrom cols tableName
-                            Left err   -> fail err)
+                        return $ SelectAll tableName)
                   P.<|> (do
                         cols <- columnsListParser
                         _ <- P.many P.space
@@ -166,12 +133,10 @@ avgParser = do
 convertValueToConditionValue :: Value -> ConditionValue
 convertValueToConditionValue (IntegerValue int) = IntegerConditionValue (fromIntegral int)
 convertValueToConditionValue (StringValue str) = StringConditionValue str
--- Add cases for other Value types if necessary
 
-valueParser :: P.Parsec String () Value
 valueParser = P.try (P.many1 P.digit >>= \digits -> return $ IntegerValue (read digits))
          P.<|> (P.between (P.char '\'') (P.char '\'') (P.many (P.noneOf "'")) >>= \str -> return $ StringValue str)
-         -- Add handling for single quotes and other types if necessary
+         P.<|> (P.between (P.char '"') (P.char '"') (P.many (P.noneOf "\"")) >>= \str -> return $ StringValue str)
         
 
 conditionParser :: P.Parsec String () Condition
@@ -241,20 +206,20 @@ conditionParser = P.choice
          
 selectWithWhereParser :: P.Parsec String () MyParsedStatement
 selectWithWhereParser = do
-    selectStmt <- selectParser  -- Use the select parser you already have
+    selectStmt <- selectParser
     _ <- P.many P.space
     _ <- caseInsensitiveString "WHERE"
     _ <- P.many P.space
     conditions <- conditionParser `P.sepBy1` (P.many P.space >> caseInsensitiveString "AND" >> P.many P.space)
-    return $ SelectWithConditions (selectedColumns selectStmt) (fromTable selectStmt) conditions
-    
--- Delete Parser
-    
+    case selectStmt of
+        SelectAll tableName -> return $ SelectWithConditions ["*"] tableName conditions
+        _ -> return $ SelectWithConditions (selectedColumns selectStmt) (fromTable selectStmt) conditions
+        
+-- Delete parser
+        
 deleteParser :: P.Parsec String () MyParsedStatement
 deleteParser = do
-    _ <- caseInsensitiveString "DELETE"
-    _ <- P.many P.space
-    _ <- caseInsensitiveString "FROM"
+    _ <- caseInsensitiveString "DELETE FROM"
     _ <- P.many P.space
     tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
     _ <- P.many P.space
@@ -262,42 +227,14 @@ deleteParser = do
     _ <- P.many P.space
     conditions <- conditionParser `P.sepBy1` (P.many P.space >> caseInsensitiveString "AND" >> P.many P.space)
     return $ DeleteFrom tableName conditions
-    
--- Insert Parser
-    
-insertParser :: P.Parsec String () MyParsedStatement
-insertParser = do
-    _ <- caseInsensitiveString "INSERT INTO"
-    _ <- P.many P.space
-    tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
-    _ <- P.many P.space
-    _ <- P.char '('
-    columns <- columnsListParser
-    _ <- P.char ')'
-    _ <- P.many P.space
-    _ <- caseInsensitiveString "VALUES"
-    _ <- P.many P.space
-    _ <- P.char '('
-    values <- valueParser `P.sepBy` (P.char ',' >> P.many P.space)
-    _ <- P.char ')'
-    return $ InsertInto tableName values -- This should probably be updated to include columns as well
-
 
 -- Parses user input into an entity representing a parsed statement
 parseStatement :: String -> Either ErrorMessage MyParsedStatement
 parseStatement input
-    | "SHOW" `isPrefixOf` (map toUpper input) = 
-                case P.parse (P.try showTablesParser P.<|> showTableParser) "" input of
-                    Left err -> Left $ "Parse Error: " ++ show err
-                    Right stmt -> Right stmt
-    | "DELETE" `isPrefixOf` (map toUpper input) =
+    | "DELETE FROM" `isPrefixOf` (map toUpper input) = 
             case P.parse deleteParser "" input of
                 Left err -> Left $ "Parse Error: " ++ show err
                 Right stmt -> Right stmt
-    | "INSERT INTO" `isPrefixOf` (map toUpper input) =
-        case P.parse insertParser "" input of
-            Left err -> Left $ "Parse Error: " ++ show err
-            Right stmt -> Right stmt
     | "SELECT AVG(" `isPrefixOf` (map toUpper input) = 
         case P.parse avgParser "" input of
             Left err -> Left $ "Parse Error: " ++ show err
@@ -321,30 +258,15 @@ parseStatement input
     
     
 -- Executes a parsed statement. Produces a DataFrame. Uses
--- InMemoryTables.databases a source of data.
-
-
--- execute for "SHOW TABLES"
-
-executeStatement :: MyParsedStatement -> [(TableName, DataFrame)] -> Either ErrorMessage DataFrame
-executeStatement ShowTables db = 
-    let tableNames = map fst db 
-    in Right $ DataFrame [Column "Tables" StringType] (map (\name -> [StringValue name]) tableNames)
-
--- execute for "SHOW TABLE name"
-
-executeStatement (ShowTable tableName) db = 
-    case lookup tableName db of
-        Just (DataFrame columns _) -> 
-            let columnNames = map columnName columns
-            in Right $ DataFrame [Column "Columns" StringType] (map (\name -> [StringValue name]) columnNames)
-        Nothing -> Left "Table not found"
+-- json files are source of data.
 
 --execute for MIN function
 
-executeStatement (SelectMin columns tableName) db = 
-    case lookup tableName db of
-        Just (DataFrame allColumns allRows) -> 
+executeStatement :: MyParsedStatement -> IO (Either ErrorMessage DataFrame)
+executeStatement (SelectMin columns tableName) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
+        Just (DataFrame allColumns allRows) -> do
             let minValues = map (\column -> 
                         let columnIndex = elemIndex column (map columnName allColumns) in
                         case columnIndex of
@@ -356,57 +278,66 @@ executeStatement (SelectMin columns tableName) db =
                                     minValue = minimum colValues
                                 in IntegerValue (fromIntegral minValue)
                             Nothing -> error $ "Column " ++ column ++ " not found") columns
-            in Right $ DataFrame (map (\c -> Column c IntegerType) columns) [minValues]
-        Nothing -> Left "Table not found"
+            return $ Right $ DataFrame (map (\c -> Column c IntegerType) columns) [minValues]
+        Nothing -> return $ Left "Table not found"
   
 --execute for SELECT column, column, ... FROM tablename (column list)        
         
-executeStatement (SelectFrom selectedCols tableName) db = 
-    case lookup tableName db of
+executeStatement (SelectFrom selectedCols tableName) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
         Just (DataFrame allColumns allRows) ->
-            let validIndices = mapMaybe (\col -> 
-                                         let colType = columnTypeByName col allColumns in
-                                         case colType of 
-                                             Just t -> elemIndex (Column col t) allColumns
-                                             Nothing -> Nothing) selectedCols
+            let allColumnNames = map columnName allColumns
+                finalSelectedCols = if selectedCols == ["*"]
+                                    then allColumnNames
+                                    else selectedCols
+                validIndices = mapMaybe (`elemIndex` allColumnNames) finalSelectedCols
                 newRows = map (\row -> map (row !!) validIndices) allRows
                 newCols = map (allColumns !!) validIndices
-            in Right $ DataFrame newCols newRows
-        Nothing -> Left "Table not found"
+            in return $ Right $ DataFrame newCols newRows
+        Nothing -> return $ Left "Table not found"
+        
+--execute for SELECT * FROM tablename
+
+executeStatement (SelectAll tableName) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
+        Just df -> return $ Right df
+        Nothing -> return $ Left "Table not found"
         
 --execute for MIN function and other columns, e.g.: SELECT MIN(column), column, column, ... FROM tablename
         
-executeStatement (SelectWithMin minCols otherCols tableName) db = 
-    case lookup tableName db of
-        Just (DataFrame allColumns allRows) -> 
+executeStatement (SelectWithMin minCols otherCols tableName) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
+        Just (DataFrame allColumns allRows) -> do
             let minValues = map (\column -> 
                         let columnIndex = elemIndex column (map columnName allColumns) in
                         case columnIndex of
                             Just idx -> 
-                                let colValues = map (\row -> case row !! idx of 
-                                                                  StringValue str -> read str :: Int 
-                                                                  IntegerValue int -> fromIntegral int
-                                                                  _ -> error "Unsupported value type.") allRows
-                                    minValue = minimum colValues
-                                in IntegerValue (fromIntegral minValue)
+                                let colValues = mapMaybe (\row -> case row !! idx of 
+                                                                  StringValue str -> Just (read str :: Int) 
+                                                                  IntegerValue int -> Just (fromIntegral int)
+                                                                  _ -> Nothing) allRows
+                                in if null colValues
+                                   then IntegerValue 0
+                                   else IntegerValue (fromIntegral $ minimum colValues)
                             Nothing -> error $ "Column " ++ column ++ " not found") minCols
-
-                -- Find the row with the minimum value for the minCols column
-                minRow = head $ filter (\row -> (case row !! (fromJust $ elemIndex (head minCols) (map columnName allColumns)) of
-                                                     IntegerValue int -> int == (case head minValues of
-                                                                                      IntegerValue minValue -> minValue
-                                                                                      _ -> error "Unexpected value type.")
-                                                     _ -> False)) allRows
-                otherValues = map (\col -> minRow !! (fromJust $ elemIndex col (map columnName allColumns))) otherCols
-                
-            in Right $ DataFrame (map (\c -> Column c IntegerType) minCols ++ map (\c -> Column c (fromJust $ columnTypeByName c allColumns)) otherCols) [minValues ++ otherValues]
-        Nothing -> Left "Table not found"
+            if null allRows
+            then return $ Right $ DataFrame (map (\c -> Column c IntegerType) minCols) []
+            else do
+                let minRowIndices = map (\col -> fromJust $ elemIndex col (map columnName allColumns)) minCols
+                let minRow = head $ filter (\row -> all (\(idx, minVal) -> row !! idx == minVal) (zip minRowIndices minValues)) allRows
+                let otherValues = map (\col -> minRow !! (fromJust $ elemIndex col (map columnName allColumns))) otherCols
+                return $ Right $ DataFrame (map (\c -> Column c IntegerType) minCols ++ map (\c -> Column c (fromJust $ columnTypeByName c allColumns)) otherCols) [minValues ++ otherValues]
+        Nothing -> return $ Left "Table not found"
         
 --execute for AVG function
 
-executeStatement (SelectAvg columns tableName) db = 
-    case lookup tableName db of
-        Just (DataFrame allColumns allRows) -> 
+executeStatement (SelectAvg columns tableName) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
+        Just (DataFrame allColumns allRows) -> do
             let avgValues = map (\column -> 
                         let columnIndex = elemIndex column (map columnName allColumns) in
                         case columnIndex of
@@ -415,60 +346,46 @@ executeStatement (SelectAvg columns tableName) db =
                                                                   StringValue str -> read str :: Float 
                                                                   IntegerValue int -> fromIntegral int
                                                                   _ -> error "Unsupported value type.") allRows
-                                    avgValue = sum colValues / (fromIntegral (length colValues))
-                                in FloatValue avgValue  -- Ensuring it's wrapped in FloatValue
+                                    avgValue = sum colValues / fromIntegral (length colValues)
+                                in FloatValue avgValue
                             Nothing -> error $ "Column " ++ column ++ " not found") columns
-            in Right $ DataFrame (map (\c -> Column c FloatType) columns) [avgValues]
-        Nothing -> Left "Table not found"
+            return $ Right $ DataFrame (map (\c -> Column c FloatType) columns) [avgValues]
+        Nothing -> return $ Left "Table not found"
         
 --execute for WHERE with AND
 
-executeStatement (SelectWithConditions selectedCols tablename conditions) db =
-    case lookup tablename db of
+executeStatement (SelectWithConditions selectedCols tableName conditions) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
         Just df -> do
-            let dfWithConditionsApplied = applyConditions conditions df
-            let DataFrame allColumns allRows = dfWithConditionsApplied
-
-            -- If selectedCols is "*", select all columns
-            let finalSelectedCols = if selectedCols == ["*"]
-                                    then map (\(Column name _) -> name) allColumns
+            let DataFrame allColumns allRows = df
+                finalSelectedCols = if selectedCols == ["*"]
+                                    then map columnName allColumns
                                     else selectedCols
+                validIndices = if selectedCols == ["*"]
+                               then [0 .. length allColumns - 1]
+                               else mapMaybe (\colName -> findIndex ((== colName) . columnName) allColumns) finalSelectedCols
+                newRows = map (\row -> map (row !!) validIndices) (filter (meetAllConditions allColumns conditions) allRows)
+                newCols = if selectedCols == ["*"]
+                          then allColumns
+                          else map (allColumns !!) validIndices
+            if null newRows
+            then return $ Left "No rows found matching the conditions"
+            else return $ Right $ DataFrame newCols newRows
+        Nothing -> return $ Left "Table not found"
+     
+--execute for delete
 
-            -- Extract only the columns specified in the SELECT statement
-            let validIndices = mapMaybe (\col ->
-                                         let colType = columnTypeByName col allColumns in
-                                         case colType of
-                                             Just t -> elemIndex (Column col t) allColumns
-                                             Nothing -> Nothing) finalSelectedCols
-            let newRows = map (\row -> map (row !!) validIndices) allRows
-            let newCols = map (allColumns !!) validIndices
-
-            Right $ DataFrame newCols newRows
-        Nothing -> Left "Table not found"
-        
---execute for insert
-
-executeStatement (InsertInto tableName values) db = 
-    case lookup tableName db of
-        Just (DataFrame columns rows) -> 
-            if length values /= length columns then
-                Left "The number of values does not match the number of columns"
-            else if not $ all isValidType (zip columns values) then
-                Left "Type mismatch between values and columns"
-            else
-                let newRow = values
-                in Right $ DataFrame columns (newRow : rows)
-        Nothing -> Left "Table not found"
-        
---execute for SELECT * FROM tablename
-
-executeStatement (StatementSelectAll tableName) db = 
-    case lookup tableName db of
-        Just df -> Right df
-        Nothing -> Left "Table not found"
-
-executeStatement _ _ = Left "Statement not supported or invalid"
-
+executeStatement (DeleteFrom tableName conditions) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
+        Just df -> do
+            let updatedDF = applyDeleteConditions conditions df
+            saveDataFrame tableName updatedDF
+            return $ Right updatedDF
+        Nothing -> return $ Left "Table not found"
+executeStatement _ = 
+    return $ Left "This type of statement is not supported"
 
 -------------------------------------------------- Helper functions -------------------------------------------------- 
  
@@ -476,28 +393,19 @@ instance Ord Value where
     compare (IntegerValue int1) (IntegerValue int2) = compare int1 int2
     compare (StringValue str1) (StringValue str2) = compare str1 str2
 
-convertConditionValueToValue :: ConditionValue -> Value
-convertConditionValueToValue (IntegerConditionValue int) = IntegerValue (toInteger int)
-convertConditionValueToValue (StringConditionValue str) = StringValue str
-
 columnName :: Column -> String
 columnName (Column name _) = name
 
-getColumnNamesForTable :: TableName -> Either ErrorMessage [String]
-getColumnNamesForTable tableName =
-    case lookup tableName InMemoryTables.database of
-        Just df -> Right $ map columnName (columns1 df)
-        Nothing -> Left "Table not found"
-        
-columns1 :: DataFrame -> [Column]
-columns1 (DataFrame cols _) = cols
-
--- extracts the type from a Column data structure
-columnType :: Column -> ColumnType
-columnType (Column _ t) = t
+getColumnNamesForTable :: TableName -> IO (Either ErrorMessage [String])
+getColumnNamesForTable tableName = do
+    result <- readDataFrame (tableName ++ ".json") 
+    case result of
+        Just (DataFrame cols _) -> return $ Right $ map columnName cols
+        Nothing -> return $ Left "Table not found or JSON error"
 
 columnNameParser :: P.Parsec String () String
 columnNameParser = P.many1 (P.alphaNum P.<|> P.char '_')
+
 columnsListParser :: P.Parsec String () [String]
 columnsListParser = columnNameParser `P.sepBy1` (P.char ',' >> P.many P.space)
 
@@ -509,15 +417,8 @@ elemAt idx xs
 columnTypeByName :: String -> [Column] -> Maybe ColumnType
 columnTypeByName colName cols = columnType <$> find (\(Column name _) -> name == colName) cols
 
-tryLessThanCondition :: P.Parsec String () Condition
-tryLessThanCondition = do
-    column <- columnNameParser
-    _ <- P.many P.space
-    _ <- P.string "<"
-    _ <- P.many P.space
-    value <- valueParser
-    let condValue = convertValueToConditionValue value
-    return $ LessThanCondition column condValue
+columnType :: Column -> ColumnType
+columnType (Column _ t) = t
 
 -- Helper function to check if the provided value matches the column type
 isValidType :: (Column, Value) -> Bool
@@ -530,9 +431,14 @@ isValidType (Column _ colType, val) =
         _                             -> False
 
 -- helper functions for WHERE with AND
+-- conditions functions for WHERE int =/</>/<=/>=/!=
 
 applyConditions :: [Condition] -> DataFrame -> DataFrame
 applyConditions conditions (DataFrame cols rows) = DataFrame cols (filter (meetAllConditions cols conditions) rows)
+
+convertConditionValueToValue :: ConditionValue -> Value
+convertConditionValueToValue (IntegerConditionValue int) = IntegerValue (toInteger int)
+convertConditionValueToValue (StringConditionValue str) = StringValue str
 
 meetAllConditions :: [Column] -> [Condition] -> Row -> Bool
 meetAllConditions columns conditions row = all (\cond -> meetCondition columns cond row) conditions
@@ -542,8 +448,6 @@ meetCondition columns (EqualsCondition colName condValue) row =
     case elemIndex colName (map columnName columns) of
         Just idx -> (row !! idx) == convertConditionValueToValue condValue
         Nothing -> False
-
--- conditions functions for WHERE int =/</>/<=/>=/!=
 
 meetCondition columns (NotEqualsCondition colName condValue) row =
     case elemIndex colName (map columnName columns) of
@@ -576,3 +480,23 @@ caseInsensitiveString :: String -> P.Parsec String () String
 caseInsensitiveString s = P.try (mapM caseInsensitiveChar s)
     where
         caseInsensitiveChar c = P.char (toLower c) P.<|> P.char (toUpper c)
+        
+-- Data frame reader and save for .json files
+        
+readDataFrame :: FilePath -> IO (Maybe DataFrame)
+readDataFrame fileName = do
+  let filePath = "db/" ++ fileName -- Prefix the file name with the directory
+  jsonContent <- B.readFile filePath
+  return $ decode jsonContent
+  
+saveDataFrame :: TableName -> DataFrame -> IO ()
+saveDataFrame tableName df = do
+    let jsonContent = encode df
+    let filePath = "db/" ++ tableName ++ ".json"
+    B.writeFile filePath jsonContent
+    
+--Delete helper functions
+
+applyDeleteConditions :: [Condition] -> DataFrame -> DataFrame
+applyDeleteConditions conditions (DataFrame cols rows) = 
+    DataFrame cols (filter (not . meetAllConditions cols conditions) rows)
