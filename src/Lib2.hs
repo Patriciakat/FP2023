@@ -19,13 +19,13 @@ import DataFrame
 import DataFrame (DataFrame, Column, ColumnType (..), Value (..))
 import Lib1 (renderDataFrameAsTable)
 import qualified Text.Parsec as P
-import Text.Parsec ((<?>))
-import Data.Aeson (encode, decode)
+import Text.Parsec ((<?>), option)
+import Data.Aeson (encode, decode, eitherDecode)
 import Data.Char (toUpper, toLower)
 import Data.List (findIndex, isPrefixOf, isInfixOf, elemIndex, find)
 import Data.Maybe (isJust, mapMaybe, catMaybes, fromJust)
+import Data.Either (isRight, fromRight, rights, partitionEithers)
 import System.Directory (listDirectory)
-import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as B
 
 type ErrorMessage = String
@@ -44,6 +44,7 @@ data MyParsedStatement
     | ShowTable TableName
     | DeleteFrom { fromTable :: TableName, conditions :: [Condition] }
     | InsertInto { intoTable :: TableName, columnNames :: [String], values :: [[Value]] }
+    | Update { updateTable :: TableName, updates :: [(String, Value)], conditions :: [Condition] }
     | SelectAll { fromTable :: TableName }
     deriving (Show, Eq)
  
@@ -263,6 +264,34 @@ insertIntoParser = do
     _ <- P.many P.space
     values <- valuesListParser
     return $ InsertInto tableName columnNames values
+    
+-- Update set parser
+
+updateParser :: P.Parsec String () MyParsedStatement
+updateParser = do
+    _ <- caseInsensitiveString "UPDATE"
+    _ <- P.many P.space
+    tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
+    _ <- P.many P.space
+    _ <- caseInsensitiveString "SET"
+    _ <- P.many P.space
+    updates <- updateListParser
+    _ <- P.many P.space
+    _ <- caseInsensitiveString "WHERE"
+    _ <- P.many P.space
+    conditions <- conditionParser `P.sepBy1` (P.many P.space >> caseInsensitiveString "AND" >> P.many P.space)
+    return $ Update tableName updates conditions
+    
+updateListParser :: P.Parsec String () [(String, Value)]
+updateListParser = updatePair `P.sepBy1` (P.char ',' >> P.many P.space)
+  where
+    updatePair = do
+      columnName <- columnNameParser
+      _ <- P.many P.space
+      _ <- P.char '='
+      _ <- P.many P.space
+      newValue <- valueParser
+      return (columnName, newValue)
 
 -- Parses user input into an entity representing a parsed statement
 parseStatement :: String -> Either ErrorMessage MyParsedStatement
@@ -283,6 +312,10 @@ parseStatement input
             case P.parse insertIntoParser "" input of
                 Left err -> Left $ "Parse Error: " ++ show err
                 Right stmt -> Right stmt
+    | "UPDATE" `isPrefixOf` map toUpper input = 
+                case P.parse updateParser "" input of
+                    Left err -> Left $ "Parse Error: " ++ show err
+                    Right stmt -> Right stmt
     | "SELECT AVG(" `isPrefixOf` (map toUpper input) = 
         case P.parse avgParser "" input of
             Left err -> Left $ "Parse Error: " ++ show err
@@ -451,17 +484,31 @@ executeStatement (DeleteFrom tableName conditions) = do
         
 --execute for insert into
 
-executeStatement stmt = case stmt of
-    InsertInto tableName colNames vals -> do
-        existingDataMaybe <- readDataFrame (tableName ++ ".json")
-        case existingDataMaybe of
-            Just existingData -> do
-                case appendNewData existingData colNames vals of
-                    Right newDataFrame -> do
-                        saveDataFrame tableName newDataFrame
-                        return $ Right newDataFrame
-                    Left errMsg -> return $ Left errMsg
-            Nothing -> return $ Left "Table not found"
+executeStatement (Update tableName updates conditions) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
+        Just df -> do
+            let updatedDFResult = applyUpdateConditions updates conditions df
+            case updatedDFResult of
+                Right updatedDF -> do
+                    saveDataFrame tableName updatedDF
+                    return $ Right updatedDF
+                Left errorMsg -> return $ Left errorMsg
+        Nothing -> return $ Left "Table not found"
+            
+--execute for update set
+
+executeStatement (Update tableName updates conditions) = do
+    result <- readDataFrame (tableName ++ ".json")
+    case result of
+        Just df -> do
+            case applyUpdateConditions updates conditions df of
+                Right updatedDF -> do
+                    saveDataFrame tableName updatedDF
+                    return $ Right updatedDF
+                Left errorMsg -> return $ Left errorMsg
+        Nothing -> return $ Left "Table not found"
+
 
 executeStatement _ = 
     return $ Left "This type of statement is not supported"
@@ -626,3 +673,22 @@ convertRowToDataFrameFormat columns colNames rowValues =
                 Just value -> Right value
                 Nothing -> Left $ "Value for column " ++ colName ++ " not found"
     in traverse (\col -> findValue (columnName col) colNames rowValues) columns
+    
+--Update set helper functions
+
+applyUpdateConditions :: [(String, Value)] -> [Condition] -> DataFrame -> Either String DataFrame
+applyUpdateConditions updates conditions (DataFrame cols rows) = 
+    DataFrame cols <$> traverse (updateRow cols) rows
+  where
+    updateRow :: [Column] -> Row -> Either String Row
+    updateRow columns row = 
+        if meetAllConditions columns conditions row
+        then applyUpdates updates columns row
+        else Right row
+
+    applyUpdates :: [(String, Value)] -> [Column] -> Row -> Either String Row
+    applyUpdates [] _ row = Right row
+    applyUpdates ((colName, newValue):us) columns row =
+        case lookup colName (zip (map columnName columns) [0..]) of
+            Just idx -> applyUpdates us columns (take idx row ++ [newValue] ++ drop (idx + 1) row)
+            Nothing -> Left $ "Column not found: " ++ colName
