@@ -43,6 +43,7 @@ data MyParsedStatement
     | ShowTables
     | ShowTable TableName
     | DeleteFrom { fromTable :: TableName, conditions :: [Condition] }
+    | InsertInto { intoTable :: TableName, columnNames :: [String], values :: [[Value]] }
     | SelectAll { fromTable :: TableName }
     deriving (Show, Eq)
  
@@ -245,6 +246,23 @@ deleteParser = do
     _ <- P.many P.space
     conditions <- conditionParser `P.sepBy1` (P.many P.space >> caseInsensitiveString "AND" >> P.many P.space)
     return $ DeleteFrom tableName conditions
+    
+--insert into parser
+
+insertIntoParser :: P.Parsec String () MyParsedStatement
+insertIntoParser = do
+    _ <- caseInsensitiveString "INSERT INTO"
+    _ <- P.many P.space
+    tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
+    _ <- P.many P.space
+    _ <- P.char '('
+    columnNames <- columnsListParser
+    _ <- P.char ')'
+    _ <- P.many P.space
+    _ <- caseInsensitiveString "VALUES"
+    _ <- P.many P.space
+    values <- valuesListParser
+    return $ InsertInto tableName columnNames values
 
 -- Parses user input into an entity representing a parsed statement
 parseStatement :: String -> Either ErrorMessage MyParsedStatement
@@ -259,6 +277,10 @@ parseStatement input
                 Right stmt -> Right stmt
     | "DELETE FROM" `isPrefixOf` (map toUpper input) = 
             case P.parse deleteParser "" input of
+                Left err -> Left $ "Parse Error: " ++ show err
+                Right stmt -> Right stmt
+    | "INSERT INTO" `isPrefixOf` (map toUpper input) = 
+            case P.parse insertIntoParser "" input of
                 Left err -> Left $ "Parse Error: " ++ show err
                 Right stmt -> Right stmt
     | "SELECT AVG(" `isPrefixOf` (map toUpper input) = 
@@ -416,7 +438,7 @@ executeStatement (ShowTable tableName) = do
             return $ Right $ DataFrame [Column "Column Name" StringType, Column "Type" StringType] schemaInfo
         Nothing -> return $ Left $ "Table " ++ tableName ++ " not found"
      
---execute for delete
+--execute for delete from
 
 executeStatement (DeleteFrom tableName conditions) = do
     result <- readDataFrame (tableName ++ ".json")
@@ -426,6 +448,21 @@ executeStatement (DeleteFrom tableName conditions) = do
             saveDataFrame tableName updatedDF
             return $ Right updatedDF
         Nothing -> return $ Left "Table not found"
+        
+--execute for insert into
+
+executeStatement stmt = case stmt of
+    InsertInto tableName colNames vals -> do
+        existingDataMaybe <- readDataFrame (tableName ++ ".json")
+        case existingDataMaybe of
+            Just existingData -> do
+                case appendNewData existingData colNames vals of
+                    Right newDataFrame -> do
+                        saveDataFrame tableName newDataFrame
+                        return $ Right newDataFrame
+                    Left errMsg -> return $ Left errMsg
+            Nothing -> return $ Left "Table not found"
+
 executeStatement _ = 
     return $ Left "This type of statement is not supported"
 
@@ -474,9 +511,6 @@ isValidType (Column _ colType, val) =
 
 -- helper functions for WHERE with AND
 -- conditions functions for WHERE int =/</>/<=/>=/!=
-
-applyConditions :: [Condition] -> DataFrame -> DataFrame
-applyConditions conditions (DataFrame cols rows) = DataFrame cols (filter (meetAllConditions cols conditions) rows)
 
 convertConditionValueToValue :: ConditionValue -> Value
 convertConditionValueToValue (IntegerConditionValue int) = IntegerValue (toInteger int)
@@ -541,8 +575,54 @@ saveDataFrame tableName df = do
     let filePath = "db/" ++ tableName ++ ".json"
     B.writeFile filePath jsonContent
     
---Delete helper functions
+--Delete from helper functions
 
 applyDeleteConditions :: [Condition] -> DataFrame -> DataFrame
 applyDeleteConditions conditions (DataFrame cols rows) = 
     DataFrame cols (filter (not . meetAllConditions cols conditions) rows)
+    
+--Insert into helper functions
+
+valuesListParser :: P.Parsec String () [[Value]]
+valuesListParser = valueTuple `P.sepBy1` (P.char ',' >> P.many P.space)
+  where
+    valueTuple = P.between (P.char '(') (P.char ')') (valueParser `P.sepBy1` (P.char ',' >> P.many P.space))
+
+appendNewData :: DataFrame -> [String] -> [[Value]] -> Either ErrorMessage DataFrame
+appendNewData (DataFrame existingColumns existingRows) colNames vals = 
+    if all (== length colNames) (map length vals)
+        then case mapM (validateAndConvertRow existingColumns colNames) vals of
+            Right newRows -> Right $ DataFrame existingColumns (existingRows ++ newRows)
+            Left errMsg -> Left errMsg
+        else Left "Number of values does not match number of columns"
+
+validateAndConvertRow :: [Column] -> [String] -> [Value] -> Either ErrorMessage [Value]
+validateAndConvertRow columns colNames rowValues =
+    if validateRow columns colNames rowValues
+        then case convertRowToDataFrameFormat columns colNames rowValues of
+            Right convertedRow -> Right convertedRow
+            Left errMsg -> Left errMsg
+        else Left "Invalid data types or column names"
+        
+validateRow :: [Column] -> [String] -> [Value] -> Bool
+validateRow columns colNames rowValues = 
+    all isValidValue $ zip colTypes rowValues
+  where
+    colTypes = map (\colName -> columnTypeByName colName columns) colNames
+
+    isValidValue (Just colType, val) =
+        case (colType, val) of
+            (IntegerType, IntegerValue _) -> True
+            (StringType, StringValue _)   -> True
+            (BoolType, BoolValue _)       -> True
+            (FloatType, FloatValue _)     -> True
+            _                             -> False
+    isValidValue _ = False
+
+convertRowToDataFrameFormat :: [Column] -> [String] -> [Value] -> Either ErrorMessage [Value]
+convertRowToDataFrameFormat columns colNames rowValues =
+    let findValue colName names values =
+            case lookup colName (zip names values) of
+                Just value -> Right value
+                Nothing -> Left $ "Value for column " ++ colName ++ " not found"
+    in traverse (\col -> findValue (columnName col) colNames rowValues) columns
