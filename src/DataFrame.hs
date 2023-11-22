@@ -5,6 +5,7 @@ module DataFrame (Column (..), ColumnType (..), Value (..), Row, DataFrame (..))
 import qualified Data.Aeson as Aeson
 import Data.Aeson.Types (Parser, typeMismatch, withObject, (.:), (.=), withArray)
 import qualified Data.Vector as V
+import qualified Data.HashMap.Strict as HM
 import Control.Applicative ((<|>))
 
 data ColumnType
@@ -62,11 +63,11 @@ instance Aeson.FromJSON DataFrame where
       parseRow = withArray "Row" $ \arr ->
         mapM parseValue (V.toList arr)
 
-      parseValue :: Aeson.Value -> Parser Value
       parseValue val = case val of
+        Aeson.Null       -> return NullValue  -- Handle Null here
         Aeson.Object obj -> parseComplexValue obj
         _                -> typeMismatch "Value" val
-        
+
 instance Aeson.FromJSON Column where
   parseJSON = withObject "Column" $ \obj -> do
     name <- obj .: "name"
@@ -81,8 +82,13 @@ instance Aeson.FromJSON ColumnType where
     "FloatType"   -> return FloatType
     _             -> fail "Invalid ColumnType"
 
+instance Aeson.FromJSON Value where
+  parseJSON Aeson.Null = return NullValue  -- Handle Null here
+  parseJSON (Aeson.Object obj) = parseComplexValue obj
+  parseJSON val = typeMismatch "Value" val
+
 parseComplexValue :: Aeson.Object -> Parser Value
-parseComplexValue obj = 
+parseComplexValue obj =
     (IntegerValue <$> obj .: "IntegerValue") <|>
     (StringValue <$> obj .: "StringValue") <|>
     (BoolValue <$> obj .: "BoolValue") <|>
@@ -90,4 +96,6 @@ parseComplexValue obj =
     parseNullValue obj
   where
     parseNullValue :: Aeson.Object -> Parser Value
-    parseNullValue o = if Aeson.Null `elem` o then return NullValue else fail "Expected a Value"
+    parseNullValue o = case Aeson.fromJSON (Aeson.Object o) of
+        Aeson.Success Aeson.Null -> return NullValue
+        _ -> fail "Expected a Value"

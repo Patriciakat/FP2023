@@ -68,7 +68,7 @@ loadTable name file = do
       maybeDf <- Lib3.readDataFrame file
       return $ Just (name, fromMaybe (getDefaultTable name) maybeDf)
     else do
-      let defaultTable = getDefaultTable name -- Move this line to the top level
+      let defaultTable = getDefaultTable name
       B.writeFile file $ Lib3.serializeDataFrame defaultTable
       return $ Just (name, defaultTable)
 
@@ -80,23 +80,27 @@ runExecuteIO (Free step) = do
     runExecuteIO next
     where
       runStep :: Lib3.ExecutionAlgebra a -> IO a
-      runStep (Lib3.GetTime next) = getCurrentTime >>= return . next
+      runStep (Lib3.LoadFile filePath next) = do
+          fileContent <- B.readFile filePath
+          return (next fileContent)
       runStep (Lib3.SaveFile tableName content next) = do
           B.writeFile ("db/" ++ tableName ++ ".json") content
           return next
-      runStep (Lib3.ReadFile filePath next) = do
-          result <- Lib3.readDataFrame filePath
-          return (next result)
+      runStep (Lib3.ExecuteSqlStatement statement next) = do
+          result <- Lib2.executeStatement statement  -- Changed from Lib3 to Lib2
+          return $ next result
+      runStep (Lib3.GetTime next) = do
+          currentTime <- getCurrentTime
+          return $ next currentTime
           
 --------------------------------------------------HELPER FUNCTIONS------------------------------------------------------
 
 -- Function to execute a command
 executeCommand :: String -> AppState -> IO (Either String DataFrame, AppState)
 executeCommand sql state = do
-    result <- runExecuteIO $ Lib3.executeSql sql (appDatabase state)
+    result <- runExecuteIO $ Lib3.executeSql sql
     case result of
         Right df -> do
-            -- Refresh state after every command
             updatedState <- refreshState state
             return (Right df, updatedState)
         Left errorMsg -> return (Left errorMsg, state)

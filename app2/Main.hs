@@ -29,22 +29,24 @@ completer n = do
   let names = ["select", "*", "from", "show", "table", "tables"] ++ map fst database
   return $ Prelude.filter (L.isPrefixOf n) names
 
--- Evaluation : handle each line user inputs
+-- Evaluation: handle each line user inputs
 cmd :: String -> Repl ()
 cmd c = do
   s <- terminalWidth <$> liftIO size
-  case cmd' s of
+  result <- liftIO $ do -- wrap the IO actions with liftIO
+    case Lib2.parseStatement c of
+      Right stmt -> Lib2.executeStatement stmt
+      Left err -> return $ Left err
+  case result of
     Left err -> liftIO $ putStrLn $ "Error: " ++ err
-    Right table -> liftIO $ putStrLn table
+    Right df -> do
+      let validation = Lib1.validateDataFrame df
+      case validation of
+        Left err -> liftIO $ putStrLn err
+        Right _ -> liftIO $ putStrLn $ Lib1.renderDataFrameAsTable s df
   where
     terminalWidth :: (Integral n) => Maybe (Window n) -> n
     terminalWidth = maybe 80 width
-    cmd' :: Integer -> Either String String
-    cmd' s = do
-      stmt <- Lib2.parseStatement c
-      df <- Lib2.executeStatement stmt database
-      _ <- Lib1.validateDataFrame df
-      return $ Lib1.renderDataFrameAsTable s df
 
 main :: IO ()
 main =
