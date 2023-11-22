@@ -481,20 +481,6 @@ executeStatement (DeleteFrom tableName conditions) = do
             saveDataFrame tableName updatedDF
             return $ Right updatedDF
         Nothing -> return $ Left "Table not found"
-        
---execute for insert into
-
-executeStatement (Update tableName updates conditions) = do
-    result <- readDataFrame (tableName ++ ".json")
-    case result of
-        Just df -> do
-            let updatedDFResult = applyUpdateConditions updates conditions df
-            case updatedDFResult of
-                Right updatedDF -> do
-                    saveDataFrame tableName updatedDF
-                    return $ Right updatedDF
-                Left errorMsg -> return $ Left errorMsg
-        Nothing -> return $ Left "Table not found"
             
 --execute for update set
 
@@ -508,6 +494,20 @@ executeStatement (Update tableName updates conditions) = do
                     return $ Right updatedDF
                 Left errorMsg -> return $ Left errorMsg
         Nothing -> return $ Left "Table not found"
+        
+--execute for insert into
+
+executeStatement stmt = case stmt of
+    InsertInto tableName colNames vals -> do
+        existingDataMaybe <- readDataFrame (tableName ++ ".json")
+        case existingDataMaybe of
+            Just existingData -> do
+                case appendNewData existingData colNames vals of
+                    Right newDataFrame -> do
+                        saveDataFrame tableName newDataFrame
+                        return $ Right newDataFrame
+                    Left errMsg -> return $ Left errMsg
+            Nothing -> return $ Left "Table not found"
 
 
 executeStatement _ = 
