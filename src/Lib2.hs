@@ -42,6 +42,7 @@ data MyParsedStatement
     | SelectWithConditions { selectedColumns :: [String], fromTable :: TableName, conditions :: [Condition] }
     | ShowTables
     | ShowTable TableName
+    | Now
     | DeleteFrom { fromTable :: TableName, conditions :: [Condition] }
     | InsertInto { intoTable :: TableName, columnNames :: [String], values :: [[Value]] }
     | Update { updateTable :: TableName, updates :: [(String, Value)], conditions :: [Condition] }
@@ -76,6 +77,13 @@ showTableParser = do
     _ <- P.many P.space
     tableName <- P.many1 (P.alphaNum P.<|> P.char '_')
     return $ ShowTable tableName
+    
+-- select now()
+
+nowParser :: P.Parsec String () MyParsedStatement
+nowParser = do
+    _ <- caseInsensitiveString "SELECT NOW()"
+    return Now
 
 -- task 3, column list
     
@@ -304,6 +312,10 @@ parseStatement input
             case P.parse showTableParser "" input of
                 Left err -> Left $ "Parse Error: " ++ show err
                 Right stmt -> Right stmt
+    | "SELECT NOW()" `isPrefixOf` map toUpper input = 
+                case P.parse nowParser "" input of
+                    Left err -> Left $ "Parse Error: " ++ show err
+                    Right stmt -> Right stmt
     | "DELETE FROM" `isPrefixOf` (map toUpper input) = 
             case P.parse deleteParser "" input of
                 Left err -> Left $ "Parse Error: " ++ show err
@@ -459,8 +471,8 @@ executeStatement (SelectWithConditions selectedCols tableName conditions) = do
 
 executeStatement ShowTables = do
     files <- listDirectory "db"
-    let tables = map (takeWhile (/= '.')) files  -- Removes file extensions
-    let rows = map (\t -> [StringValue t]) tables  -- Wrap table names in `StringValue`
+    let tables = map (takeWhile (/= '.')) files
+    let rows = map (\t -> [StringValue t]) tables
     return $ Right $ DataFrame [Column "Tables" StringType] rows
     
 executeStatement (ShowTable tableName) = do
@@ -470,6 +482,10 @@ executeStatement (ShowTable tableName) = do
             let schemaInfo = map (\(Column name ctype) -> [StringValue name, StringValue (show ctype)]) columns
             return $ Right $ DataFrame [Column "Column Name" StringType, Column "Type" StringType] schemaInfo
         Nothing -> return $ Left $ "Table " ++ tableName ++ " not found"
+        
+--execute for select now
+
+executeStatement Now = return $ Left "HANDLE_NOW_IN_LIB3"
      
 --execute for delete from
 
