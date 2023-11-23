@@ -6,6 +6,7 @@ import Control.Monad.Free (Free (..))
 import Data.Time (UTCTime, getCurrentTime)
 import Data.List qualified as L
 import Data.Maybe (catMaybes, fromJust, isJust, fromMaybe)
+import Data.Time.Format (formatTime, defaultTimeLocale)
 import System.Console.Repline
 import System.Console.Terminal.Size
 import System.Directory (doesFileExist)
@@ -87,11 +88,16 @@ runExecuteIO (Free step) = do
           B.writeFile ("db/" ++ tableName ++ ".json") content
           return next
       runStep (Lib3.ExecuteSqlStatement statement next) = do
-          result <- Lib2.executeStatement statement  -- Changed from Lib3 to Lib2
+          result <- Lib2.executeStatement statement
           return $ next result
       runStep (Lib3.GetTime next) = do
           currentTime <- getCurrentTime
           return $ next currentTime
+      runStep (Lib3.HandleNow next) = do
+          currentTime <- getCurrentTime
+          let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" currentTime
+          let timeDataFrame = DataFrame [Column "current_time" StringType] [[StringValue formattedTime]]
+          return $ next (Right timeDataFrame)
           
 --------------------------------------------------HELPER FUNCTIONS------------------------------------------------------
 
