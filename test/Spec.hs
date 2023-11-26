@@ -1,11 +1,13 @@
 import Data.Either
-import Data.Maybe ()
+import Data.Maybe
 import InMemoryTables qualified as D
 import Lib1
 import Lib2
 import Test.Hspec
 import Lib2 (DataFrame(..), Value(..))
-
+import Lib3 (executeSql, runTestExecuteIO, initialInMemoryDB)
+import DataFrame (Column(..), ColumnType(..), DataFrame(..))
+import InMemoryTables (tableEmployees, tableInvalid1, tableInvalid2, tableLongStrings, tableWithNulls, tableDepartment)
 --Lib1.hs tests
 
 main :: IO ()
@@ -39,164 +41,346 @@ main = hspec $ do
     it "renders a table" $ do
       Lib1.renderDataFrameAsTable 100 (snd D.tableEmployees) `shouldSatisfy` not . null
       
---Lib2.hs tests
-      
-  describe "Lib2.parseStatement" $ do
-  
-    it "parses SHOW TABLES statement" $ do
-      Lib2.parseStatement "SHOW TABLES" `shouldBe` Right Lib2.ShowTables
+--Lib2.hs query test setup with test DSL in lib3.hs file
 
-    it "shows all tables in the database" $ do
-        let statement = Lib2.parseStatement "SHOW TABLES"
-        case statement of
-            Right stmt -> do
-                let result = Lib2.executeStatement stmt D.database
-                case result of
-                    Right (DataFrame _ rows) -> 
-                        (map (\[StringValue s] -> s) rows) `shouldBe` ["employees", "invalid1", "invalid2", "long_strings", "flags"]
-                    Left err -> fail ("Execution error: " ++ err)
-            Left _ -> fail "Parsing failed."
-    
-    it "parses SHOW TABLE name statement" $ do
-      Lib2.parseStatement "SHOW TABLE employees" `shouldBe` Right (Lib2.ShowTable "employees")
-    
-    it "shows columns of specific table" $ do
-        let statement = Lib2.parseStatement "SHOW TABLE employees"
-        case statement of
-            Right stmt -> do
-                let result = Lib2.executeStatement stmt D.database
-                case result of
-                    Right (DataFrame _ rows) ->
-                        (map (\[StringValue s] -> s) rows) `shouldBe` ["id", "name", "surname"]
-                    Left err -> fail ("Execution error: " ++ err)
-            Left _ -> fail "Parsing failed."
-         
-    it "ensures table names are case-sensitive" $ do
-      let statement = Lib2.parseStatement "SHOW TABLE Employees"
-      case statement of
-          Right stmt -> Lib2.executeStatement stmt D.database `shouldSatisfy` isLeft
-          _ -> fail "Parsing failed."
-               
-    it "parses single column select" $ do
-      Lib2.parseStatement "select id from employees" `shouldBe` Right (Lib2.SelectFrom ["id"] "employees")
+  describe "Lib3.executeSql for SELECT queries" $ do
+    let testDB = initialInMemoryDB
   
-    it "parses multiple column select" $ do
-      Lib2.parseStatement "select id, surname from employees" `shouldBe` Right (Lib2.SelectFrom ["id", "surname"] "employees")
+    it "selects all columns from employees" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT * FROM employees") initialInMemoryDB
+        case result of
+          Right df -> do
+            df `shouldBe` DataFrame [Column "id" IntegerType, 
+                                     Column "department_id" IntegerType, 
+                                     Column "name" StringType, 
+                                     Column "surname" StringType]
+                                    [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"], 
+                                     [IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"],
+                                     [IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"],
+                                     [IntegerValue 3, IntegerValue 101, StringValue "Ag", StringValue "Pt"]]
+          Left errMsg -> fail errMsg
+    
+    it "selects id column from employees" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT id FROM employees") initialInMemoryDB
+        case result of
+          Right df -> do
+            df `shouldBe` DataFrame [Column "id" IntegerType]
+                                    [[IntegerValue 1], 
+                                     [IntegerValue 2], 
+                                     [IntegerValue 3], 
+                                     [IntegerValue 3]]
+          Left errMsg -> fail errMsg
+    
+    it "selects id and name columns from employees" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT id, name FROM employees") initialInMemoryDB
+        case result of
+          Right df -> do
+            df `shouldBe` DataFrame [Column "id" IntegerType, 
+                                     Column "name" StringType]
+                                    [[IntegerValue 1, StringValue "Vi"], 
+                                     [IntegerValue 2, StringValue "Ed"],
+                                     [IntegerValue 3, StringValue "Ed"],
+                                     [IntegerValue 3, StringValue "Ag"]]
+          Left errMsg -> fail errMsg
+    
+    it "selects id, name, and surname columns from employees" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT id, name, surname FROM employees") initialInMemoryDB
+        case result of
+          Right df -> do
+            df `shouldBe` DataFrame [Column "id" IntegerType, 
+                                     Column "name" StringType, 
+                                     Column "surname" StringType]
+                                    [[IntegerValue 1, StringValue "Vi", StringValue "Po"], 
+                                     [IntegerValue 2, StringValue "Ed", StringValue "Dl"],
+                                     [IntegerValue 3, StringValue "Ed", StringValue "Tr"],
+                                     [IntegerValue 3, StringValue "Ag", StringValue "Pt"]]
+          Left errMsg -> fail errMsg
+
+  describe "Lib3.executeSql for MIN function queries" $ do
+    let testDB = initialInMemoryDB
   
-    it "parses select with conditions" $ do
-      Lib2.parseStatement "select id, name from employees where id=1" `shouldBe` Right (Lib2.SelectWithConditions ["id", "name"] "employees" [EqualsCondition "id" (IntegerConditionValue 1)])
-    
-    it "selects a single column" $ do
-      Lib2.parseStatement "select text1 from long_strings" `shouldBe` Right (Lib2.SelectFrom ["text1"] "long_strings")
-    
-    it "selects multiple columns" $ do
-      Lib2.parseStatement "select text1, text2 from long_strings" `shouldBe` Right (Lib2.SelectFrom ["text1", "text2"] "long_strings")
-    
-    it "handles MIN function with uppercase" $ do
-      Lib2.parseStatement "select MIN(id) from employees" `shouldBe` Right (Lib2.SelectMin ["id"] "employees")
-    
-    it "handles MIN function with lowercase" $ do
-      Lib2.parseStatement "select min(id) from employees" `shouldBe` Right (Lib2.SelectMin ["id"] "employees")
-    
-    it "handles MIN function with other columns" $ do
-      Lib2.parseStatement "select min(id), name from employees" `shouldBe` Right (Lib2.SelectWithMin ["id"] ["name"] "employees")
-    
-    it "handles AVG function with uppercase" $ do
-      Lib2.parseStatement "select AVG(id) from employees" `shouldBe` Right (Lib2.SelectAvg ["id"] "employees")
-    
-    it "handles AVG function with lowercase" $ do
-      Lib2.parseStatement "select avg(id) from employees" `shouldBe` Right (Lib2.SelectAvg ["id"] "employees")
-    
-    it "handles WHERE condition with single condition" $ do
-      Lib2.parseStatement "select id from employees where id=3" `shouldBe` Right (Lib2.SelectWithConditions ["id"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 3)])
-    
-    it "handles WHERE condition with AND clause" $ do
-      Lib2.parseStatement "select id from employees where id=3 and name=\"Ag\"" `shouldBe` Right (Lib2.SelectWithConditions ["id"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 3), Lib2.EqualsCondition "name" (Lib2.StringConditionValue "Ag")])
+    it "selects min(id) from employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id) FROM employees") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType] [[IntegerValue 1]]
+        Left errMsg -> fail errMsg
+  
+    it "selects min(id) from departments" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id) FROM departments") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType] [[IntegerValue 100]]
+        Left errMsg -> fail errMsg
+  
+    it "selects min(id), name from employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id), name FROM employees") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType, Column "name" StringType] [[IntegerValue 1, StringValue "Vi"]]
+        Left errMsg -> fail errMsg
+  
+    it "selects min(id), address, town from departments" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id), address, town FROM departments") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType, Column "address" StringType, Column "town" StringType] [[IntegerValue 100, StringValue "123 Market St.", StringValue "Townsville"]]
+        Left errMsg -> fail errMsg
+  
+    it "selects min(id), department_id, name, surname from employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id), department_id, name, surname FROM employees") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType] [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"]]
+        Left errMsg -> fail errMsg
+        
+  describe "Lib3.executeSql for AVG function queries" $ do
+    let testDB = initialInMemoryDB
+  
+    it "selects avg(id) from employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT avg(id) FROM employees") testDB
+      case result of
+        Right (DataFrame columns rows) -> do
+          columns `shouldBe` [Column "avg(id)" FloatType]
+          let expectedAvg = FloatValue $ (1 + 2 + 3 + 3) / 4
+          rows `shouldBe` [[expectedAvg]]
+        Left errMsg -> fail errMsg
+  
+    it "selects avg(id) from departments" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT avg(id) FROM departments") testDB
+      case result of
+        Right (DataFrame columns rows) -> do
+          columns `shouldBe` [Column "avg(id)" FloatType]
+          let expectedAvg = FloatValue $ (100 + 101 + 102) / 3
+          rows `shouldBe` [[expectedAvg]]
+        Left errMsg -> fail errMsg
+        
+  describe "Lib3.executeSql for SHOW TABLE(S) queries" $ do
+      let testDB = initialInMemoryDB
+  
+      it "shows all tables" $ do
+          let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLES") testDB
+          case result of
+              Right df -> df `shouldBe` DataFrame [Column "Tables" StringType] 
+                                                  [[StringValue "employees"], 
+                                                   [StringValue "invalid1"], 
+                                                   [StringValue "invalid2"], 
+                                                   [StringValue "long_strings"], 
+                                                   [StringValue "flags"], 
+                                                   [StringValue "departments"]]
+              Left errMsg -> fail errMsg
+  
+      it "shows schema of table employees" $ do
+          let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE employees") testDB
+          case result of
+              Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                  [[StringValue "id", StringValue "IntegerType"],
+                                                   [StringValue "department_id", StringValue "IntegerType"],
+                                                   [StringValue "name", StringValue "StringType"],
+                                                   [StringValue "surname", StringValue "StringType"]]
+              Left errMsg -> fail errMsg
+  
+      it "shows schema of table departments" $ do
+          let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE departments") testDB
+          case result of
+              Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                  [[StringValue "id", StringValue "IntegerType"],
+                                                   [StringValue "name", StringValue "StringType"],
+                                                   [StringValue "address", StringValue "StringType"],
+                                                   [StringValue "town", StringValue "StringType"]]
+              Left errMsg -> fail errMsg
+              
+      it "shows schema of table long_strings" $ do
+              let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE long_strings") testDB
+              case result of
+                  Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                      [[StringValue "text1", StringValue "StringType"],
+                                                       [StringValue "text2", StringValue "StringType"]]
+                  Left errMsg -> fail errMsg
       
-    it "select with WHERE and single condition on multiple columns" $ do
-        Lib2.parseStatement "select id, surname from employees where id=3" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 3)])
+      it "shows schema of table flags" $ do
+              let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE flags") testDB
+              case result of
+                  Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                      [[StringValue "flag", StringValue "StringType"],
+                                                       [StringValue "value", StringValue "BoolType"]]
+                  Left errMsg -> fail errMsg
+              
+      it "shows schema of table invalid1" $ do
+              let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE invalid1") testDB
+              case result of
+                  Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                      [[StringValue "id", StringValue "IntegerType"]]
+                  Left errMsg -> fail errMsg
+                  
+  describe "Lib3.executeSql for SELECT with WHERE queries" $ do
+      let testDB = initialInMemoryDB
     
-    it "select with WHERE and AND condition on multiple columns" $ do
-        Lib2.parseStatement "select id, surname from employees where id=3 and name=\"Ag\"" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 3), Lib2.EqualsCondition "name" (Lib2.StringConditionValue "Ag")])
-    
-    it "select with multiple WHERE and AND conditions on multiple columns" $ do
-        Lib2.parseStatement "select id, surname, name from employees where id=3 and name=\"Ag\" and surname=\"Pt\"" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 3), Lib2.EqualsCondition "name" (Lib2.StringConditionValue "Ag"), Lib2.EqualsCondition "surname" (Lib2.StringConditionValue "Pt")])
-    
-    it "select MIN with WHERE condition" $ do
-        Lib2.parseStatement "select min(id) from employees where name=\"Ed\"" `shouldBe` Right (Lib2.SelectMin ["id"] "employees") -- You might need additional logic in `executeStatement` to handle this case.
-    
-    it "select MIN with other columns and WHERE condition" $ do
-        Lib2.parseStatement "select min(id), name, surname from employees where name=\"Ed\"" `shouldBe` Right (Lib2.SelectWithMin ["id"] ["name", "surname"] "employees")
+      it "selects * from employees where id=3" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT * FROM employees WHERE id=3") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+            rows `shouldBe` [[IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"],
+                             [IntegerValue 3, IntegerValue 101, StringValue "Ag", StringValue "Pt"]]
+          Left errMsg -> fail errMsg
+  
+      it "selects * from employees where id=3 and name=\"Ed\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT * FROM employees WHERE id=3 AND name=\"Ed\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+            rows `shouldBe` [[IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"]]
+          Left errMsg -> fail errMsg
+  
+      it "selects * from employees where name=\"Ed\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT * FROM employees WHERE name=\"Ed\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+            rows `shouldContain` [[IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"]]
+            rows `shouldContain` [[IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"]]
+          Left errMsg -> fail errMsg
+
+      it "selects * from employees where id=3 and name=\"Ed\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT * FROM employees WHERE id=3 AND name=\"Ed\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+            rows `shouldBe` [[IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"]]
+          Left errMsg -> fail errMsg
+          
+      it "selects id, name from employees where department_id=101" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT id, name FROM employees WHERE department_id=101") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "name" StringType]
+            rows `shouldBe` [[IntegerValue 2, StringValue "Ed"], [IntegerValue 3, StringValue "Ag"]]
+          Left errMsg -> fail errMsg
+          
+      it "selects department_id, surname, name from employees where surname=\"Po\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT department_id, surname, name FROM employees WHERE surname=\"Po\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "department_id" IntegerType, Column "surname" StringType, Column "name" StringType]
+            rows `shouldBe` [[IntegerValue 100, StringValue "Po", StringValue "Vi"]]
+          Left errMsg -> fail errMsg
+          
+      it "selects id, town from departments where id=101" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT id, town FROM departments WHERE id=101") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "town" StringType]
+            rows `shouldBe` [[IntegerValue 101, StringValue "Moneytown"]]
+          Left errMsg -> fail errMsg
+  
+      it "selects address, town from departments where id=102 and town=\"Techville\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT address, town FROM departments WHERE id=102 AND town=\"Techville\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "address" StringType, Column "town" StringType]
+            rows `shouldBe` [[StringValue "789 Tech Blvd.", StringValue "Techville"]]
+          Left errMsg -> fail errMsg
+          
+  describe "Lib3.executeSql for DELETE queries" $ do
+    let testDB = initialInMemoryDB
+  
+    it "deletes from employees where id=1" $ do
+      let (result, newDb) = runTestExecuteIO (executeSql True "DELETE FROM employees WHERE id=1") testDB
+      case result of
+        Right _ -> 
+          lookup "employees" newDb `shouldBe` Just (DataFrame [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+                                                            [[IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"],
+                                                             [IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"],
+                                                             [IntegerValue 3, IntegerValue 101, StringValue "Ag", StringValue "Pt"]])
+        Left errMsg -> fail errMsg
+  
+    it "deletes from employees where id=3" $ do
+      let (result, newDb) = runTestExecuteIO (executeSql True "DELETE FROM employees WHERE id=3") testDB
+      case result of
+        Right _ -> 
+          lookup "employees" newDb `shouldBe` Just (DataFrame [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+                                                            [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"],
+                                                             [IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"]])
+        Left errMsg -> fail errMsg
+  
+    it "deletes from employees where id=3 and name=\"Ed\"" $ do
+      let (result, newDb) = runTestExecuteIO (executeSql True "DELETE FROM employees WHERE id=3 AND name=\"Ed\"") testDB
+      case result of
+        Right _ -> 
+          lookup "employees" newDb `shouldBe` Just (DataFrame [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+                                                            [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"],
+                                                             [IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"],
+                                                             [IntegerValue 3, IntegerValue 101, StringValue "Ag", StringValue "Pt"]])
+        Left errMsg -> fail errMsg
+  
+    it "deletes from employees where department_id=101 and name=\"Ag\"" $ do
+      let (result, newDb) = runTestExecuteIO (executeSql True "DELETE FROM employees WHERE department_id=101 AND name=\"Ag\"") testDB
+      case result of
+        Right _ -> 
+          lookup "employees" newDb `shouldBe` Just (DataFrame [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+                                                            [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"],
+                                                             [IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"],
+                                                             [IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"]])
+        Left errMsg -> fail errMsg
         
-    describe "test =, !=, >, <, >=, <=:" $ do
-      describe "select with conditions for one column:" $ do
-        it "SELECT _ FROM (=)" $ do
-          Lib2.parseStatement "Select surname from employees where id=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ FROM (!=)" $ do
-          Lib2.parseStatement "Select surname from employees where id!=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.NotEqualsCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ FROM (>)" $ do
-          Lib2.parseStatement "Select surname from employees where id>2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.GreaterThanCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ FROM (<)" $ do
-          Lib2.parseStatement "Select surname from employees where id<2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.LessThanCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ FROM (>=)" $ do
-          Lib2.parseStatement "Select surname from employees where id>=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.GreaterThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ FROM (<=)" $ do
-          Lib2.parseStatement "Select surname from employees where id<=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.LessThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
-      describe "select with conditions for multiple columns:" $ do
-        it "SELECT _ _ _ FROM (=)" $ do
-          Lib2.parseStatement "Select id, surname, name from employees where id=2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ _ _ FROM (!=)" $ do
-          Lib2.parseStatement "Select id, surname, name from employees where id!=2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.NotEqualsCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ _ _ FROM (>)" $ do
-          Lib2.parseStatement "Select id, surname, name from employees where id>2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.GreaterThanCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ _ _ FROM (<)" $ do
-          Lib2.parseStatement "Select id, surname, name from employees where id<2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.LessThanCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ _ _ FROM (>=)" $ do
-          Lib2.parseStatement "Select id, surname, name from employees where id>=2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.GreaterThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
-        it "SELECT _ _ _ FROM (<=)" $ do
-          Lib2.parseStatement "Select id, surname, name from employees where id<=2" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname", "name"] "employees" [Lib2.LessThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
-      describe "select with conditions with AND:" $ do
-        it "SELECT _ FROM (=) AND (!=)" $ do
-          Lib2.parseStatement "Select surname from employees where id=2 and id!=1" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 2), Lib2.NotEqualsCondition "id" (Lib2.IntegerConditionValue 1)])
-        it "SELECT _ FROM (<) AND (>)" $ do
-          Lib2.parseStatement "Select surname from employees where id>1 and id<3" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.GreaterThanCondition "id" (Lib2.IntegerConditionValue 1), Lib2.LessThanCondition "id" (Lib2.IntegerConditionValue 3)])
-        it "SELECT _ FROM (<=) AND (>=)" $ do
-          Lib2.parseStatement "Select surname from employees where id>=1 and id<=2" `shouldBe` Right (Lib2.SelectWithConditions ["surname"] "employees" [Lib2.GreaterThanOrEqualCondition "id" (Lib2.IntegerConditionValue 1), Lib2.LessThanOrEqualCondition "id" (Lib2.IntegerConditionValue 2)])
-        
-          -- Invalid cases
-    it "shows an error for a table that not exist" $ do
-        let statement = Lib2.parseStatement "SHOW TABLE nonexistent_table"
-        case statement of
-            Right stmt -> do
-                let result = Lib2.executeStatement stmt D.database
-                case result of
-                    Right _ -> fail "Expected an error but got a successful result."
-                    Left err -> err `shouldBe` "Table not found"
-            Left _ -> fail "Parsing failed."
-            
-    it "select from a non-existent table" $ do
-        let statement = Lib2.parseStatement "select * from non_existent_table"
-        case statement of
-            Right stmt -> Lib2.executeStatement stmt D.database `shouldSatisfy` isLeft
-            _ -> fail "Parsing failed."
-    
-    it "select a column with non-matching condition" $ do
-        Lib2.parseStatement "select name from employees where id=9999" `shouldBe` Right (Lib2.SelectWithConditions ["name"] "employees" [Lib2.EqualsCondition "id" (Lib2.IntegerConditionValue 9999)])
-    
-    it "select MIN on a non-integer column" $ do
-        Lib2.parseStatement "select min(surname) from employees" `shouldBe` Right (Lib2.SelectMin ["surname"] "employees")
-    
-    it "select from another non-existent table" $ do
-        let statement = Lib2.parseStatement "select text1 from non_existent_table"
-        case statement of
-            Right stmt -> Lib2.executeStatement stmt D.database `shouldSatisfy` isLeft
-            _ -> fail "Parsing failed."
-    
-    it "malformed select with extra comma" $ do
-        Lib2.parseStatement "select text1, from long_strings" `shouldNotBe` Right (Lib2.SelectFrom ["text1"] "long_strings")
-    
-    it "select with non-matching WHERE condition" $ do
-        Lib2.parseStatement "select id, surname from employees where name=\"nonExistingName\"" `shouldBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "name" (Lib2.StringConditionValue "nonExistingName")])
-    
-    it "select with single quotes instead of double quotes" $ do
-        Lib2.parseStatement "select id, surname from employees where name='Vi'" `shouldNotBe` Right (Lib2.SelectWithConditions ["id", "surname"] "employees" [Lib2.EqualsCondition "name" (Lib2.StringConditionValue "Vi")])
+  describe "Lib3.executeSql for UPDATE queries" $ do
+    let testDB = initialInMemoryDB
+    let DataFrame _ initialEmployeesRows = snd tableEmployees
+  
+    it "updates employees setting id=100 where id=1" $ do
+          let (result, _) = runTestExecuteIO (executeSql True "UPDATE employees SET id=100 WHERE id=1") testDB
+          case result of
+            Right (DataFrame columns rows) -> do
+              let expectedRows = filter (\row -> head row /= IntegerValue 1) initialEmployeesRows
+              let updatedRow = [IntegerValue 100, IntegerValue 100, StringValue "Vi", StringValue "Po"]
+              let finalExpectedRows = updatedRow : expectedRows
+              rows `shouldMatchList` finalExpectedRows
+            Left errMsg -> fail errMsg
+          
+    it "updates employees setting id=100 and name='updated' where id=1" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "UPDATE employees SET id=100, name='updated' WHERE id=1") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            let updatedRow = [IntegerValue 100, IntegerValue 100, StringValue "updated", StringValue "Po"]
+            let expectedRows = updatedRow : filter (\row -> head row /= IntegerValue 1) initialEmployeesRows
+            rows `shouldMatchList` expectedRows
+          Left errMsg -> fail errMsg
+
+    it "updates employees setting id=100 and name='updated' where id=3 and name='Ed'" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "UPDATE employees SET id=100, name='updated' WHERE id=3 AND name='Ed'") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            let updateRow row = 
+                  case row of
+                    (IntegerValue 3 : IntegerValue depId : StringValue "Ed" : rest) -> [IntegerValue 100, IntegerValue depId, StringValue "updated"] ++ rest
+                    _ -> row
+            let updatedRows = map updateRow initialEmployeesRows
+            rows `shouldMatchList` updatedRows
+          Left errMsg -> fail errMsg
+          
+  describe "Lib3.executeSql for INSERT INTO queries" $ do
+    let testDB = initialInMemoryDB
+  
+    it "inserts a new row into employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "INSERT INTO employees (id, department_id, name, surname) VALUES (10, 102, 'name', 'surname')") testDB
+      case result of
+        Right (DataFrame _ rows) -> do
+          let newRow = [IntegerValue 10, IntegerValue 102, StringValue "name", StringValue "surname"]
+          newRow `shouldSatisfy` (`elem` rows)
+        Left errMsg -> fail errMsg
+  
+    it "inserts multiple rows into employees" $ do
+      let sql = "INSERT INTO employees (id, department_id, name, surname) VALUES (10, 102, 'name', 'surname'), (11, 101, 'name2', 'surname2')"
+      let (result, _) = runTestExecuteIO (executeSql True sql) testDB
+      case result of
+        Right (DataFrame _ rows) -> do
+          let newRow1 = [IntegerValue 10, IntegerValue 102, StringValue "name", StringValue "surname"]
+          let newRow2 = [IntegerValue 11, IntegerValue 101, StringValue "name2", StringValue "surname2"]
+          newRow1 `shouldSatisfy` (`elem` rows)
+          newRow2 `shouldSatisfy` (`elem` rows)
+        Left errMsg -> fail errMsg
+  
+    it "inserts a new row into departments" $ do
+      let sql = "INSERT INTO departments (id, name, address, town) VALUES (105, 'Biotechnology', '987 Bio St.', 'Biotown')"
+      let (result, _) = runTestExecuteIO (executeSql True sql) testDB
+      case result of
+        Right (DataFrame _ rows) -> do
+          let newRow = [IntegerValue 105, StringValue "Biotechnology", StringValue "987 Bio St.", StringValue "Biotown"]
+          newRow `shouldSatisfy` (`elem` rows)
+        Left errMsg -> fail errMsg

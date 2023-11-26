@@ -4,8 +4,9 @@ module InMemoryTables
     tableInvalid2,
     tableLongStrings,
     tableWithNulls,
+    tableDepartment,
     database,
-    TableName,
+    TableName
   )
 where
 
@@ -17,11 +18,11 @@ tableEmployees :: (TableName, DataFrame)
 tableEmployees =
   ( "employees",
     DataFrame
-      [Column "id" IntegerType, Column "name" StringType, Column "surname" StringType]
-      [ [IntegerValue 1, StringValue "Vi", StringValue "Po"],
-        [IntegerValue 2, StringValue "Ed", StringValue "Dl"],
-        [IntegerValue 3, StringValue "Ed", StringValue "Tr"],
-        [IntegerValue 3, StringValue "Ag", StringValue "Pt"]
+      [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+      [ [IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"],
+        [IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"],
+        [IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"],
+        [IntegerValue 3, IntegerValue 101, StringValue "Ag", StringValue "Pt"]
       ]
   )
 
@@ -80,6 +81,17 @@ tableWithNulls =
         [StringValue "b", BoolValue False]
       ]
   )
+  
+tableDepartment :: (TableName, DataFrame)
+tableDepartment =
+  ( "departments",
+    DataFrame
+      [ Column "id" IntegerType, Column "name" StringType, Column "address" StringType, Column "town" StringType]
+      [ [ IntegerValue 100, StringValue "Marketing", StringValue "123 Market St.", StringValue "Townsville" ],
+        [ IntegerValue 101, StringValue "Finance", StringValue "456 Finance Ave.", StringValue "Moneytown" ],
+        [ IntegerValue 102, StringValue "IT", StringValue "789 Tech Blvd.", StringValue "Techville" ]
+      ]
+  )
 
 database :: [(TableName, DataFrame)]
-database = [tableEmployees, tableInvalid1, tableInvalid2, tableLongStrings, tableWithNulls]
+database = [tableEmployees, tableInvalid1, tableInvalid2, tableLongStrings, tableWithNulls, tableDepartment]

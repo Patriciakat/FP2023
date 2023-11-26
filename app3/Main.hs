@@ -104,7 +104,7 @@ runExecuteIO (Free step) = do
 -- Function to execute a command
 executeCommand :: String -> AppState -> IO (Either String DataFrame, AppState)
 executeCommand sql state = do
-    result <- runExecuteIO $ Lib3.executeSql sql
+    result <- runExecuteIO $ Lib3.executeSql False sql  -- Pass False for production mode
     case result of
         Right df -> do
             updatedState <- refreshState state

@@ -7,6 +7,8 @@ module Lib2
     convertConditionValueToValue,
     meetAllConditions,
     isValidType,
+    Row,
+    columnName,
     MyParsedStatement(..),
     Condition(..),
     ConditionValue(..),
