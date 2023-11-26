@@ -353,3 +353,34 @@ main = hspec $ do
             let updatedRows = map updateRow initialEmployeesRows
             rows `shouldMatchList` updatedRows
           Left errMsg -> fail errMsg
+          
+  describe "Lib3.executeSql for INSERT INTO queries" $ do
+    let testDB = initialInMemoryDB
+  
+    it "inserts a new row into employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "INSERT INTO employees (id, department_id, name, surname) VALUES (10, 102, 'name', 'surname')") testDB
+      case result of
+        Right (DataFrame _ rows) -> do
+          let newRow = [IntegerValue 10, IntegerValue 102, StringValue "name", StringValue "surname"]
+          newRow `shouldSatisfy` (`elem` rows)
+        Left errMsg -> fail errMsg
+  
+    it "inserts multiple rows into employees" $ do
+      let sql = "INSERT INTO employees (id, department_id, name, surname) VALUES (10, 102, 'name', 'surname'), (11, 101, 'name2', 'surname2')"
+      let (result, _) = runTestExecuteIO (executeSql True sql) testDB
+      case result of
+        Right (DataFrame _ rows) -> do
+          let newRow1 = [IntegerValue 10, IntegerValue 102, StringValue "name", StringValue "surname"]
+          let newRow2 = [IntegerValue 11, IntegerValue 101, StringValue "name2", StringValue "surname2"]
+          newRow1 `shouldSatisfy` (`elem` rows)
+          newRow2 `shouldSatisfy` (`elem` rows)
+        Left errMsg -> fail errMsg
+  
+    it "inserts a new row into departments" $ do
+      let sql = "INSERT INTO departments (id, name, address, town) VALUES (105, 'Biotechnology', '987 Bio St.', 'Biotown')"
+      let (result, _) = runTestExecuteIO (executeSql True sql) testDB
+      case result of
+        Right (DataFrame _ rows) -> do
+          let newRow = [IntegerValue 105, StringValue "Biotechnology", StringValue "987 Bio St.", StringValue "Biotown"]
+          newRow `shouldSatisfy` (`elem` rows)
+        Left errMsg -> fail errMsg

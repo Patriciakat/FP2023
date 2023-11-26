@@ -246,13 +246,22 @@ updateValue columnIndexMap row (colName, newValue) =
     Just idx -> take idx row ++ [newValue] ++ drop (idx + 1) row
     Nothing -> row
     
--- Helper function to insert new row into DataFrame
+-- Helper function to insert new rows into DataFrame
 insertIntoDataFrame :: DataFrame -> [String] -> [Value] -> Either ErrorMessage DataFrame
-insertIntoDataFrame (DataFrame columns rows) colNames newValues = 
-    if length colNames == length newValues && all (\colName -> any (\(Column name _) -> name == colName) columns) colNames
-    then let newRow = map (\colName -> fromMaybe (error "Column not found") (lookup colName (zip colNames newValues))) (map Lib2.columnName columns)
-         in Right (DataFrame columns (rows ++ [newRow]))
-    else Left "Column names and values mismatch or column not found"
+insertIntoDataFrame (DataFrame columns rows) colNames newValues =
+    let numCols = length colNames
+        numRows = length newValues `div` numCols
+    in if length newValues `mod` numCols == 0 
+          && all (`elem` map Lib2.columnName columns) colNames
+       then let newRowChunks = chunksOf numCols newValues
+                newRows = map (\chunk -> map (\colName -> fromMaybe (error "Column not found") (lookup colName (zip colNames chunk))) (map Lib2.columnName columns)) newRowChunks
+            in Right (DataFrame columns (rows ++ newRows))
+       else Left "Column names and values mismatch or column not found"
+
+-- Helper function to split a list into chunks of a given size
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs = take n xs : chunksOf n (drop n xs)
   
 
 ------------------------------------executes for test DSL for each query implementation---------------------------------
