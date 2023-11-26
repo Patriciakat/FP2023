@@ -18,7 +18,7 @@ module Lib3
   )
 where
 
-import Lib2 (MyParsedStatement(..), Condition, parseStatement, executeStatement, Value, isValidType)
+import Lib2
 import DataFrame (DataFrame(..), Column(..), ColumnType(..), Value(..))
 import Control.Monad.Free (Free (..), liftF)
 import Data.Aeson (encode, decode)
@@ -117,6 +117,18 @@ runTestStep (ExecuteSqlStatementInMemory statement next) db =
     SelectAvg columns tableName ->
       let result = executeSelectAvgInMemory columns tableName db
       in (next result, db)
+    ShowTables ->
+      let result = executeShowTablesInMemory db
+      in (next result, db)
+    ShowTable tableName ->
+      let result = executeShowTableInMemory tableName db
+      in (next result, db)
+    SelectWithConditions selectedCols tableName conditions ->
+      let result = executeSelectWithConditionsInMemory selectedCols tableName conditions db
+      in (next result, db)
+    DeleteFrom tableName conditions -> 
+      let (result, newDb) = executeDeleteFromInMemory tableName conditions db
+      in (next result, newDb)
     _ -> (next (Left "Operation not supported in test DSL"), db)
 
 -- Initial in-memory database
@@ -184,9 +196,7 @@ columnTypeByName colName columns =
 findMinRowIndices :: [Value] -> [Column] -> [[Value]] -> [Int]
 findMinRowIndices minValues allColumns allRows = 
   let columnIndexMap = zip (map (\(Column colName _) -> colName) allColumns) [0..]
-      -- Find indices for each column where minValues were found
       minValIndices = map (\minVal -> fromMaybe (-1) $ findIndex (\(Column _ colType) -> matchesMinValue colType minVal) allColumns) minValues
-      -- Filter rows where each minVal is present at the respective column index
       matchingRows = filter (\row -> all (\(idx, val) -> (row !! idx) == val) (zip minValIndices minValues)) allRows
   in map fst $ filter (not . null . snd) $ zip [0..] matchingRows
 
@@ -196,7 +206,6 @@ matchesMinValue colType val =
   case (colType, val) of
     (IntegerType, IntegerValue _) -> True
     (StringType, StringValue _) -> True
-    -- Add other type matches as necessary
     _ -> False
 
 -- Select rows with minimum values
@@ -210,6 +219,11 @@ numericValue (IntegerValue int) = Just $ fromIntegral int
 numericValue (StringValue str) = Just $ read str
 numericValue _ = Nothing
 
+-- Helper function to filter rows based on conditions
+filterRowsWithConditions :: [Column] -> [Condition] -> [[Value]] -> [Int] -> [[Value]]
+filterRowsWithConditions allColumns conditions allRows validIndices =
+  filter (meetAllConditions allColumns conditions) $ map (\row -> map (row !!) validIndices) allRows
+  
 
 ------------------------------------executes for test DSL for each query implementation---------------------------------
 
@@ -221,13 +235,10 @@ executeSelectInMemory columns tableName db =
   case lookup tableName db of
     Just (DataFrame allColumns allRows) ->
       if columns == ["*"]
-      then Right (DataFrame allColumns allRows)  -- If selecting all columns, return them as is.
+      then Right (DataFrame allColumns allRows)
       else 
-        -- First, ensure the columns requested exist in allColumns, preserving the order.
         let selectedColumns = filter (\(Column name _) -> name `elem` columns) allColumns
-            -- Then, find the index of each selected column in the original allColumns list.
             selectedIndices = mapMaybe (\(Column name _) -> findIndex (\(Column nameAll _) -> name == nameAll) allColumns) selectedColumns
-            -- Now, use the indices to extract the corresponding values from each row.
             selectedRows = map (\row -> [row !! idx | idx <- selectedIndices]) allRows
         in Right (DataFrame selectedColumns selectedRows)
     Nothing -> Left $ "Table " ++ tableName ++ " not found"
@@ -241,6 +252,7 @@ executeSelectAllInMemory tableName db =
     Nothing -> Left $ "Table " ++ tableName ++ " not found"
 
 -- Execute for in memory MIN function
+
 executeSelectMinInMemory :: [String] -> String -> InMemoryDB -> Either ErrorMessage DataFrame
 executeSelectMinInMemory columns tableName db = 
   case lookup tableName db of
@@ -252,6 +264,7 @@ executeSelectMinInMemory columns tableName db =
     Nothing -> Left $ "Table " ++ tableName ++ " not found"
 
 -- Execute for in memory MIN function and other columns
+
 executeSelectWithMinInMemory :: [String] -> [String] -> String -> InMemoryDB -> Either ErrorMessage DataFrame
 executeSelectWithMinInMemory minCols otherCols tableName db = 
   case lookup tableName db of
@@ -289,4 +302,52 @@ executeSelectAvgInMemory columns tableName db =
                             in FloatValue avgValue
                         Nothing -> error $ "Column " ++ column ++ " not found") columns
       in Right $ DataFrame (map (\c -> Column ("avg(" ++ c ++ ")") FloatType) columns) [avgValues]
+    Nothing -> Left $ "Table " ++ tableName ++ " not found"
+    
+-- Executes for in memory show tables and show table {tableName}
+
+executeShowTablesInMemory :: InMemoryDB -> Either ErrorMessage DataFrame
+executeShowTablesInMemory db = 
+    let tableNames = map fst db
+        rows = map (\t -> [StringValue t]) tableNames
+    in Right $ DataFrame [Column "Tables" StringType] rows
+
+executeShowTableInMemory :: String -> InMemoryDB -> Either ErrorMessage DataFrame
+executeShowTableInMemory tableName db = 
+    case lookup tableName db of
+        Just (DataFrame columns _) ->
+            let schemaInfo = map (\(Column name ctype) -> [StringValue name, StringValue (show ctype)]) columns
+            in Right $ DataFrame [Column "Column Name" StringType, Column "Type" StringType] schemaInfo
+        Nothing -> Left $ "Table " ++ tableName ++ " not found"
+        
+-- Executes for in memory for SELECT with WHERE and AND's
+
+executeSelectWithConditionsInMemory :: [String] -> String -> [Condition] -> InMemoryDB -> Either ErrorMessage DataFrame
+executeSelectWithConditionsInMemory selectedCols tableName conditions db =
+  case lookup tableName db of
+    Just (DataFrame allColumns allRows) -> do
+      let finalSelectedCols = if selectedCols == ["*"]
+                              then map (\(Column colName _) -> colName) allColumns
+                              else selectedCols
+          validIndices = if selectedCols == ["*"]
+                         then [0 .. length allColumns - 1]
+                         else mapMaybe (\colName -> findIndex (\(Column name _) -> name == colName) allColumns) finalSelectedCols
+          filteredRows = filter (meetAllConditions allColumns conditions) allRows
+          selectedRows = map (\row -> [row !! idx | idx <- validIndices]) filteredRows
+          selectedColumns = [allColumns !! idx | idx <- validIndices]
+      if null selectedRows
+      then Left "No rows found matching the conditions"
+      else Right $ DataFrame selectedColumns selectedRows
+    Nothing -> Left $ "Table " ++ tableName ++ " not found"
+    
+-- Executes for in memory delete from
+
+executeDeleteFromInMemory :: String -> [Condition] -> InMemoryDB -> Either ErrorMessage (DataFrame, InMemoryDB)
+executeDeleteFromInMemory tableName conditions db = 
+  case lookup tableName db of
+    Just (DataFrame allColumns allRows) ->
+      let rowsAfterDeletion = filter (not . meetAllConditions allColumns conditions) allRows
+          updatedDF = DataFrame allColumns rowsAfterDeletion
+          updatedDB = (tableName, updatedDF) : filter ((/= tableName) . fst) db
+      in Right (updatedDF, updatedDB)
     Nothing -> Left $ "Table " ++ tableName ++ " not found"

@@ -148,3 +148,130 @@ main = hspec $ do
           let expectedAvg = FloatValue $ (100 + 101 + 102) / 3
           rows `shouldBe` [[expectedAvg]]
         Left errMsg -> fail errMsg
+        
+  describe "Lib3.executeSql for SHOW TABLE(S) queries" $ do
+      let testDB = initialInMemoryDB
+  
+      it "shows all tables" $ do
+          let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLES") testDB
+          case result of
+              Right df -> df `shouldBe` DataFrame [Column "Tables" StringType] 
+                                                  [[StringValue "employees"], 
+                                                   [StringValue "invalid1"], 
+                                                   [StringValue "invalid2"], 
+                                                   [StringValue "long_strings"], 
+                                                   [StringValue "flags"], 
+                                                   [StringValue "departments"]]
+              Left errMsg -> fail errMsg
+  
+      it "shows schema of table employees" $ do
+          let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE employees") testDB
+          case result of
+              Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                  [[StringValue "id", StringValue "IntegerType"],
+                                                   [StringValue "department_id", StringValue "IntegerType"],
+                                                   [StringValue "name", StringValue "StringType"],
+                                                   [StringValue "surname", StringValue "StringType"]]
+              Left errMsg -> fail errMsg
+  
+      it "shows schema of table departments" $ do
+          let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE departments") testDB
+          case result of
+              Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                  [[StringValue "id", StringValue "IntegerType"],
+                                                   [StringValue "name", StringValue "StringType"],
+                                                   [StringValue "address", StringValue "StringType"],
+                                                   [StringValue "town", StringValue "StringType"]]
+              Left errMsg -> fail errMsg
+              
+      it "shows schema of table long_strings" $ do
+              let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE long_strings") testDB
+              case result of
+                  Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                      [[StringValue "text1", StringValue "StringType"],
+                                                       [StringValue "text2", StringValue "StringType"]]
+                  Left errMsg -> fail errMsg
+      
+      it "shows schema of table flags" $ do
+              let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE flags") testDB
+              case result of
+                  Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                      [[StringValue "flag", StringValue "StringType"],
+                                                       [StringValue "value", StringValue "BoolType"]]
+                  Left errMsg -> fail errMsg
+              
+      it "shows schema of table invalid1" $ do
+              let (result, _) = runTestExecuteIO (executeSql True "SHOW TABLE invalid1") testDB
+              case result of
+                  Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
+                                                      [[StringValue "id", StringValue "IntegerType"]]
+                  Left errMsg -> fail errMsg
+                  
+  describe "Lib3.executeSql for SELECT with WHERE queries" $ do
+      let testDB = initialInMemoryDB
+    
+      it "selects * from employees where id=3" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT * FROM employees WHERE id=3") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+            rows `shouldBe` [[IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"],
+                             [IntegerValue 3, IntegerValue 101, StringValue "Ag", StringValue "Pt"]]
+          Left errMsg -> fail errMsg
+  
+      it "selects * from employees where id=3 and name=\"Ed\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT * FROM employees WHERE id=3 AND name=\"Ed\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+            rows `shouldBe` [[IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"]]
+          Left errMsg -> fail errMsg
+  
+      it "selects * from employees where name=\"Ed\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT * FROM employees WHERE name=\"Ed\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+            rows `shouldContain` [[IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"]]
+            rows `shouldContain` [[IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"]]
+          Left errMsg -> fail errMsg
+
+      it "selects * from employees where id=3 and name=\"Ed\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT * FROM employees WHERE id=3 AND name=\"Ed\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+            rows `shouldBe` [[IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"]]
+          Left errMsg -> fail errMsg
+          
+      it "selects id, name from employees where department_id=101" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT id, name FROM employees WHERE department_id=101") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "name" StringType]
+            rows `shouldBe` [[IntegerValue 2, StringValue "Ed"], [IntegerValue 3, StringValue "Ag"]]
+          Left errMsg -> fail errMsg
+          
+      it "selects department_id, surname, name from employees where surname=\"Po\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT department_id, surname, name FROM employees WHERE surname=\"Po\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "department_id" IntegerType, Column "surname" StringType, Column "name" StringType]
+            rows `shouldBe` [[IntegerValue 100, StringValue "Po", StringValue "Vi"]]
+          Left errMsg -> fail errMsg
+          
+      it "selects id, town from departments where id=101" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT id, town FROM departments WHERE id=101") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "id" IntegerType, Column "town" StringType]
+            rows `shouldBe` [[IntegerValue 101, StringValue "Moneytown"]]
+          Left errMsg -> fail errMsg
+  
+      it "selects address, town from departments where id=102 and town=\"Techville\"" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "SELECT address, town FROM departments WHERE id=102 AND town=\"Techville\"") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            columns `shouldBe` [Column "address" StringType, Column "town" StringType]
+            rows `shouldBe` [[StringValue "789 Tech Blvd.", StringValue "Techville"]]
+          Left errMsg -> fail errMsg
