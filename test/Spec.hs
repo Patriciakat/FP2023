@@ -95,3 +95,56 @@ main = hspec $ do
                                      [IntegerValue 3, StringValue "Ag", StringValue "Pt"]]
           Left errMsg -> fail errMsg
 
+  describe "Lib3.executeSql for MIN function queries" $ do
+    let testDB = initialInMemoryDB
+  
+    it "selects min(id) from employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id) FROM employees") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType] [[IntegerValue 1]]
+        Left errMsg -> fail errMsg
+  
+    it "selects min(id) from departments" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id) FROM departments") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType] [[IntegerValue 100]]
+        Left errMsg -> fail errMsg
+  
+    it "selects min(id), name from employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id), name FROM employees") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType, Column "name" StringType] [[IntegerValue 1, StringValue "Vi"]]
+        Left errMsg -> fail errMsg
+  
+    it "selects min(id), address, town from departments" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id), address, town FROM departments") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType, Column "address" StringType, Column "town" StringType] [[IntegerValue 100, StringValue "123 Market St.", StringValue "Townsville"]]
+        Left errMsg -> fail errMsg
+  
+    it "selects min(id), department_id, name, surname from employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT MIN(id), department_id, name, surname FROM employees") testDB
+      case result of
+        Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType] [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"]]
+        Left errMsg -> fail errMsg
+        
+  describe "Lib3.executeSql for AVG function queries" $ do
+    let testDB = initialInMemoryDB
+  
+    it "selects avg(id) from employees" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT avg(id) FROM employees") testDB
+      case result of
+        Right (DataFrame columns rows) -> do
+          columns `shouldBe` [Column "avg(id)" FloatType]
+          let expectedAvg = FloatValue $ (1 + 2 + 3 + 3) / 4
+          rows `shouldBe` [[expectedAvg]]
+        Left errMsg -> fail errMsg
+  
+    it "selects avg(id) from departments" $ do
+      let (result, _) = runTestExecuteIO (executeSql True "SELECT avg(id) FROM departments") testDB
+      case result of
+        Right (DataFrame columns rows) -> do
+          columns `shouldBe` [Column "avg(id)" FloatType]
+          let expectedAvg = FloatValue $ (100 + 101 + 102) / 3
+          rows `shouldBe` [[expectedAvg]]
+        Left errMsg -> fail errMsg

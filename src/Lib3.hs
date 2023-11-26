@@ -25,8 +25,8 @@ import Data.Aeson (encode, decode)
 import qualified Data.ByteString.Lazy as B
 import Data.Time (UTCTime, getCurrentTime)
 import Data.Time.Format (formatTime, defaultTimeLocale)
-import Data.Maybe (mapMaybe, fromMaybe, maybeToList, catMaybes)
-import Data.List (elemIndex, findIndex)
+import Data.Maybe (mapMaybe, fromMaybe, maybeToList, catMaybes, fromJust, mapMaybe)
+import Data.List (elemIndex, findIndex, find, transpose)
 
 import qualified InMemoryTables as IMT
 
@@ -108,7 +108,15 @@ runTestStep (ExecuteSqlStatementInMemory statement next) db =
     SelectAll tableName -> 
       let result = executeSelectAllInMemory tableName db
       in (next result, db)
-    -- Add similar cases for InsertInto, Update, DeleteFrom, etc.
+    SelectMin columns tableName ->
+      let result = executeSelectMinInMemory columns tableName db
+      in (next result, db)
+    SelectWithMin minCols otherCols tableName ->
+      let result = executeSelectWithMinInMemory minCols otherCols tableName db
+      in (next result, db)
+    SelectAvg columns tableName ->
+      let result = executeSelectAvgInMemory columns tableName db
+      in (next result, db)
     _ -> (next (Left "Operation not supported in test DSL"), db)
 
 -- Initial in-memory database
@@ -121,6 +129,10 @@ initialInMemoryDB =
     ("flags", snd IMT.tableWithNulls),
     ("departments", snd IMT.tableDepartment)
   ]
+  
+  
+-------------------------------------------------helper functions-------------------------------------------------------
+
 
 -- Serialization function for DataFrame
 serializeDataFrame :: DataFrame -> B.ByteString
@@ -149,9 +161,60 @@ readDataFrameFile filePath = liftF $ LoadFile filePath (\content -> id (deserial
 getTime :: Execution UTCTime
 getTime = liftF $ GetTime id
 
+-- Helper function to find the minimum value in a list of Maybe Values
+minValue :: [Maybe Value] -> Value
+minValue values = 
+  let numericValues = catMaybes values
+  in case numericValues of
+      (IntegerValue x : xs) -> IntegerValue $ minimum $ x : map (\(IntegerValue i) -> i) xs
+      (StringValue s : xs) -> StringValue $ minimum $ s : map (\(StringValue str) -> str) xs
+      _ -> IntegerValue 0
+      
+-- Function to get column name from a Column
+columnName :: Column -> String
+columnName (Column name _) = name
+
+-- Function to find the column type by name
+columnTypeByName :: String -> [Column] -> ColumnType
+columnTypeByName colName columns = 
+    case find (\(Column name _) -> name == colName) columns of
+        Just (Column _ colType) -> colType
+        Nothing -> error $ "Column not found: " ++ colName
+        
+findMinRowIndices :: [Value] -> [Column] -> [[Value]] -> [Int]
+findMinRowIndices minValues allColumns allRows = 
+  let columnIndexMap = zip (map (\(Column colName _) -> colName) allColumns) [0..]
+      -- Find indices for each column where minValues were found
+      minValIndices = map (\minVal -> fromMaybe (-1) $ findIndex (\(Column _ colType) -> matchesMinValue colType minVal) allColumns) minValues
+      -- Filter rows where each minVal is present at the respective column index
+      matchingRows = filter (\row -> all (\(idx, val) -> (row !! idx) == val) (zip minValIndices minValues)) allRows
+  in map fst $ filter (not . null . snd) $ zip [0..] matchingRows
+
+-- Helper function to match a Value with a ColumnType
+matchesMinValue :: ColumnType -> Value -> Bool
+matchesMinValue colType val =
+  case (colType, val) of
+    (IntegerType, IntegerValue _) -> True
+    (StringType, StringValue _) -> True
+    -- Add other type matches as necessary
+    _ -> False
+
+-- Select rows with minimum values
+selectRowsWithMinValues :: [Int] -> [[Value]] -> [[Value]]
+selectRowsWithMinValues rowIndices allRows =
+  [allRows !! rowIndex | rowIndex <- rowIndices]
+  
+-- Helper function to extract numeric value from Value type
+numericValue :: Value -> Maybe Float
+numericValue (IntegerValue int) = Just $ fromIntegral int
+numericValue (StringValue str) = Just $ read str
+numericValue _ = Nothing
+
+
 ------------------------------------executes for test DSL for each query implementation---------------------------------
 
---execute for in memory select from
+
+-- Execute for in memory select from
 
 executeSelectInMemory :: [String] -> String -> InMemoryDB -> Either ErrorMessage DataFrame
 executeSelectInMemory columns tableName db = 
@@ -169,10 +232,61 @@ executeSelectInMemory columns tableName db =
         in Right (DataFrame selectedColumns selectedRows)
     Nothing -> Left $ "Table " ++ tableName ++ " not found"
     
---execute for in memory select all
+-- Execute for in memory select all
 
 executeSelectAllInMemory :: String -> InMemoryDB -> Either ErrorMessage DataFrame
 executeSelectAllInMemory tableName db = 
   case lookup tableName db of
     Just df -> Right df
+    Nothing -> Left $ "Table " ++ tableName ++ " not found"
+
+-- Execute for in memory MIN function
+executeSelectMinInMemory :: [String] -> String -> InMemoryDB -> Either ErrorMessage DataFrame
+executeSelectMinInMemory columns tableName db = 
+  case lookup tableName db of
+    Just (DataFrame allColumns allRows) ->
+      let minValues = map (\column -> 
+                    let columnValues = map (\row -> lookup column (zip (map (\(Column colName _) -> colName) allColumns) row)) allRows
+                    in minValue columnValues) columns
+      in Right $ DataFrame (map (\c -> Column ("min(" ++ c ++ ")") IntegerType) columns) [minValues]
+    Nothing -> Left $ "Table " ++ tableName ++ " not found"
+
+-- Execute for in memory MIN function and other columns
+executeSelectWithMinInMemory :: [String] -> [String] -> String -> InMemoryDB -> Either ErrorMessage DataFrame
+executeSelectWithMinInMemory minCols otherCols tableName db = 
+  case lookup tableName db of
+    Just (DataFrame allColumns allRows) ->
+      let columnIndexMap = zip (map (\(Column colName _) -> colName) allColumns) [0..]
+          minValIndices = map (\minCol -> fromMaybe (-1) $ lookup minCol columnIndexMap) minCols
+          otherColIndices = map (\otherCol -> fromMaybe (-1) $ lookup otherCol columnIndexMap) otherCols
+
+          minValues = map (\idx -> minimum $ map (!! idx) allRows) minValIndices
+          matchingRow = find (\row -> all (\(idx, val) -> (row !! idx) == val) (zip minValIndices minValues)) allRows
+
+      in case matchingRow of
+           Just row -> Right $ DataFrame 
+                        (map (\c -> Column ("min(" ++ c ++ ")") IntegerType) minCols ++ 
+                         map (\c -> let Just (Column _ colType) = find (\(Column colName _) -> colName == c) allColumns
+                                    in Column c colType) otherCols) 
+                        [[row !! idx | idx <- minValIndices ++ otherColIndices]]
+           Nothing -> Left "No matching row found"
+    Nothing -> Left $ "Table " ++ tableName ++ " not found"
+    
+-- Execute for in memory AVG function
+
+executeSelectAvgInMemory :: [String] -> String -> InMemoryDB -> Either ErrorMessage DataFrame
+executeSelectAvgInMemory columns tableName db = 
+  case lookup tableName db of
+    Just (DataFrame allColumns allRows) ->
+      let avgValues = map (\column -> 
+                    let columnIndex = findIndex (\(Column colName _) -> colName == column) allColumns
+                    in case columnIndex of
+                        Just idx -> 
+                            let colValues = catMaybes $ map (\row -> numericValue (row !! idx)) allRows
+                                avgValue = if null colValues 
+                                           then 0 
+                                           else sum colValues / fromIntegral (length colValues)
+                            in FloatValue avgValue
+                        Nothing -> error $ "Column " ++ column ++ " not found") columns
+      in Right $ DataFrame (map (\c -> Column ("avg(" ++ c ++ ")") FloatType) columns) [avgValues]
     Nothing -> Left $ "Table " ++ tableName ++ " not found"
