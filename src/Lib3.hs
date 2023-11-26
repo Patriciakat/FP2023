@@ -26,7 +26,7 @@ import qualified Data.ByteString.Lazy as B
 import Data.Time (UTCTime, getCurrentTime)
 import Data.Time.Format (formatTime, defaultTimeLocale)
 import Data.Maybe (mapMaybe, fromMaybe, maybeToList, catMaybes, fromJust, mapMaybe)
-import Data.List (elemIndex, findIndex, find, transpose)
+import Data.List (elemIndex, findIndex, find, transpose, foldl')
 
 import qualified InMemoryTables as IMT
 
@@ -126,9 +126,25 @@ runTestStep (ExecuteSqlStatementInMemory statement next) db =
     SelectWithConditions selectedCols tableName conditions ->
       let result = executeSelectWithConditionsInMemory selectedCols tableName conditions db
       in (next result, db)
-    DeleteFrom tableName conditions -> 
-      let (result, newDb) = executeDeleteFromInMemory tableName conditions db
-      in (next result, newDb)
+    DeleteFrom tableName conditions ->
+      let result = executeDeleteFromInMemory tableName conditions db
+      in case result of
+        Right (updatedDF, updatedDB) -> (next (Right updatedDF), updatedDB)
+        Left errMsg -> (next (Left errMsg), db)
+    Update tableName updates conditions ->
+      let result = executeUpdateInMemory tableName updates conditions db
+      in case result of
+        Right updatedDB -> 
+          let updatedDF = maybe (DataFrame [] []) id $ lookup tableName updatedDB
+          in (next (Right updatedDF), updatedDB)
+        Left errMsg -> (next (Left errMsg), db)
+    InsertInto tableName colNames vals -> 
+      let result = executeInsertIntoInMemory tableName colNames (concat vals) db
+      in case result of
+        Right updatedDB -> 
+          let updatedDF = fromMaybe (DataFrame [] []) (lookup tableName updatedDB)
+          in (next (Right updatedDF), updatedDB)
+        Left errMsg -> (next (Left errMsg), db)
     _ -> (next (Left "Operation not supported in test DSL"), db)
 
 -- Initial in-memory database
@@ -223,6 +239,20 @@ numericValue _ = Nothing
 filterRowsWithConditions :: [Column] -> [Condition] -> [[Value]] -> [Int] -> [[Value]]
 filterRowsWithConditions allColumns conditions allRows validIndices =
   filter (meetAllConditions allColumns conditions) $ map (\row -> map (row !!) validIndices) allRows
+  
+updateValue :: [(String, Int)] -> Row -> (String, Value) -> Row
+updateValue columnIndexMap row (colName, newValue) =
+  case lookup colName columnIndexMap of
+    Just idx -> take idx row ++ [newValue] ++ drop (idx + 1) row
+    Nothing -> row
+    
+-- Helper function to insert new row into DataFrame
+insertIntoDataFrame :: DataFrame -> [String] -> [Value] -> Either ErrorMessage DataFrame
+insertIntoDataFrame (DataFrame columns rows) colNames newValues = 
+    if length colNames == length newValues && all (\colName -> any (\(Column name _) -> name == colName) columns) colNames
+    then let newRow = map (\colName -> fromMaybe (error "Column not found") (lookup colName (zip colNames newValues))) (map Lib2.columnName columns)
+         in Right (DataFrame columns (rows ++ [newRow]))
+    else Left "Column names and values mismatch or column not found"
   
 
 ------------------------------------executes for test DSL for each query implementation---------------------------------
@@ -351,3 +381,31 @@ executeDeleteFromInMemory tableName conditions db =
           updatedDB = (tableName, updatedDF) : filter ((/= tableName) . fst) db
       in Right (updatedDF, updatedDB)
     Nothing -> Left $ "Table " ++ tableName ++ " not found"
+    
+-- Execute for in memory update set
+
+executeUpdateInMemory :: String -> [(String, Value)] -> [Condition] -> InMemoryDB -> Either ErrorMessage InMemoryDB
+executeUpdateInMemory tableName updates conditions db = 
+  case lookup tableName db of
+    Just (DataFrame allColumns allRows) -> 
+      let columnIndexMap = map (\(Column name _, idx) -> (name, idx)) $ zip allColumns [0..]
+          updateRow row = 
+            if meetAllConditions allColumns conditions row then 
+              foldl' (updateValue columnIndexMap) row updates 
+            else row
+          updatedRows = map updateRow allRows
+          updatedDF = DataFrame allColumns updatedRows
+          updatedDB = (tableName, updatedDF) : filter ((/= tableName) . fst) db
+      in Right updatedDB
+    Nothing -> Left $ "Table " ++ tableName ++ " not found"
+    
+-- Executes for in memory insert into
+
+executeInsertIntoInMemory :: String -> [String] -> [Value] -> InMemoryDB -> Either ErrorMessage InMemoryDB
+executeInsertIntoInMemory tableName colNames vals db = 
+    case lookup tableName db of
+        Just df -> 
+            case insertIntoDataFrame df colNames vals of
+                Right updatedDF -> Right ((tableName, updatedDF) : filter ((/= tableName) . fst) db)
+                Left errMsg -> Left errMsg
+        Nothing -> Left $ "Table " ++ tableName ++ " not found"

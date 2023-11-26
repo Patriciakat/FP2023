@@ -6,7 +6,8 @@ import Lib2
 import Test.Hspec
 import Lib2 (DataFrame(..), Value(..))
 import Lib3 (executeSql, runTestExecuteIO, initialInMemoryDB)
-import DataFrame (Column(..), ColumnType(..))
+import DataFrame (Column(..), ColumnType(..), DataFrame(..))
+import InMemoryTables (tableEmployees, tableInvalid1, tableInvalid2, tableLongStrings, tableWithNulls, tableDepartment)
 --Lib1.hs tests
 
 main :: IO ()
@@ -274,4 +275,81 @@ main = hspec $ do
           Right (DataFrame columns rows) -> do
             columns `shouldBe` [Column "address" StringType, Column "town" StringType]
             rows `shouldBe` [[StringValue "789 Tech Blvd.", StringValue "Techville"]]
+          Left errMsg -> fail errMsg
+          
+  describe "Lib3.executeSql for DELETE queries" $ do
+    let testDB = initialInMemoryDB
+  
+    it "deletes from employees where id=1" $ do
+      let (result, newDb) = runTestExecuteIO (executeSql True "DELETE FROM employees WHERE id=1") testDB
+      case result of
+        Right _ -> 
+          lookup "employees" newDb `shouldBe` Just (DataFrame [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+                                                            [[IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"],
+                                                             [IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"],
+                                                             [IntegerValue 3, IntegerValue 101, StringValue "Ag", StringValue "Pt"]])
+        Left errMsg -> fail errMsg
+  
+    it "deletes from employees where id=3" $ do
+      let (result, newDb) = runTestExecuteIO (executeSql True "DELETE FROM employees WHERE id=3") testDB
+      case result of
+        Right _ -> 
+          lookup "employees" newDb `shouldBe` Just (DataFrame [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+                                                            [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"],
+                                                             [IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"]])
+        Left errMsg -> fail errMsg
+  
+    it "deletes from employees where id=3 and name=\"Ed\"" $ do
+      let (result, newDb) = runTestExecuteIO (executeSql True "DELETE FROM employees WHERE id=3 AND name=\"Ed\"") testDB
+      case result of
+        Right _ -> 
+          lookup "employees" newDb `shouldBe` Just (DataFrame [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+                                                            [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"],
+                                                             [IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"],
+                                                             [IntegerValue 3, IntegerValue 101, StringValue "Ag", StringValue "Pt"]])
+        Left errMsg -> fail errMsg
+  
+    it "deletes from employees where department_id=101 and name=\"Ag\"" $ do
+      let (result, newDb) = runTestExecuteIO (executeSql True "DELETE FROM employees WHERE department_id=101 AND name=\"Ag\"") testDB
+      case result of
+        Right _ -> 
+          lookup "employees" newDb `shouldBe` Just (DataFrame [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
+                                                            [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"],
+                                                             [IntegerValue 2, IntegerValue 101, StringValue "Ed", StringValue "Dl"],
+                                                             [IntegerValue 3, IntegerValue 102, StringValue "Ed", StringValue "Tr"]])
+        Left errMsg -> fail errMsg
+        
+  describe "Lib3.executeSql for UPDATE queries" $ do
+    let testDB = initialInMemoryDB
+    let DataFrame _ initialEmployeesRows = snd tableEmployees
+  
+    it "updates employees setting id=100 where id=1" $ do
+          let (result, _) = runTestExecuteIO (executeSql True "UPDATE employees SET id=100 WHERE id=1") testDB
+          case result of
+            Right (DataFrame columns rows) -> do
+              let expectedRows = filter (\row -> head row /= IntegerValue 1) initialEmployeesRows
+              let updatedRow = [IntegerValue 100, IntegerValue 100, StringValue "Vi", StringValue "Po"]
+              let finalExpectedRows = updatedRow : expectedRows
+              rows `shouldMatchList` finalExpectedRows
+            Left errMsg -> fail errMsg
+          
+    it "updates employees setting id=100 and name='updated' where id=1" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "UPDATE employees SET id=100, name='updated' WHERE id=1") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            let updatedRow = [IntegerValue 100, IntegerValue 100, StringValue "updated", StringValue "Po"]
+            let expectedRows = updatedRow : filter (\row -> head row /= IntegerValue 1) initialEmployeesRows
+            rows `shouldMatchList` expectedRows
+          Left errMsg -> fail errMsg
+
+    it "updates employees setting id=100 and name='updated' where id=3 and name='Ed'" $ do
+        let (result, _) = runTestExecuteIO (executeSql True "UPDATE employees SET id=100, name='updated' WHERE id=3 AND name='Ed'") testDB
+        case result of
+          Right (DataFrame columns rows) -> do
+            let updateRow row = 
+                  case row of
+                    (IntegerValue 3 : IntegerValue depId : StringValue "Ed" : rest) -> [IntegerValue 100, IntegerValue depId, StringValue "updated"] ++ rest
+                    _ -> row
+            let updatedRows = map updateRow initialEmployeesRows
+            rows `shouldMatchList` updatedRows
           Left errMsg -> fail errMsg
