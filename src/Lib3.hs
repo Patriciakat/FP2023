@@ -158,7 +158,6 @@ readDataFrameFile filePath = liftF $ LoadFile filePath (\content -> id (deserial
 getTime :: Execution UTCTime
 getTime = liftF $ GetTime id
 
--- Modified function to handle the Now statement
 handleNowStatement :: (Either ErrorMessage DataFrame -> a) -> IO a
 handleNowStatement next = do
     currentTime <- getCurrentTime

@@ -81,11 +81,6 @@ runExecuteIO (Free step) = do
       runStep (Lib3.GetTime next) = do
           currentTime <- getCurrentTime
           return $ next currentTime
-      runStep (Lib3.HandleNow next) = do
-          currentTime <- getCurrentTime
-          let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" currentTime
-          let timeDataFrame = DataFrame [Column "current_time" StringType] [[StringValue formattedTime]]
-          return $ next (Right timeDataFrame)
           
 --------------------------------------------------HELPER FUNCTIONS------------------------------------------------------
 
