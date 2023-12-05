@@ -13,7 +13,6 @@ module Lib3
     saveDataFrame,
     getTime,
     runExecuteIO,
-    runTestExecuteIO,
     initialInMemoryDB
   )
 where
@@ -41,111 +40,9 @@ data ExecutionAlgebra next
   | SaveFile TableName FileContent next
   | ExecuteSqlStatement MyParsedStatement (Either ErrorMessage DataFrame -> next)
   | GetTime (UTCTime -> next)
-  | HandleNow (Either ErrorMessage DataFrame -> next)
-  | ExecuteSqlStatementInMemory MyParsedStatement (Either ErrorMessage DataFrame -> next)
   deriving (Functor)
 
 type Execution = Free ExecutionAlgebra
-
--- Function to execute SQL commands, handling different types of statements
-executeSql :: Bool -> String -> Execution (Either ErrorMessage DataFrame)
-executeSql isTest sql = do
-  case parseStatement sql of
-    Right parsedStatement ->
-      if parsedStatement == Now
-      then liftF $ HandleNow id 
-      else liftF $ (if isTest then ExecuteSqlStatementInMemory else ExecuteSqlStatement) parsedStatement id
-    Left errorMsg ->
-      return $ Left errorMsg
-
--- Function to run the Execution monad
-runExecuteIO :: Bool -> Execution r -> IO r
-runExecuteIO isTest execution =
-  if isTest
-  then let (result, _) = runTestExecuteIO execution initialInMemoryDB
-       in return result
-  else runProductionExecuteIO execution
-  where
-    runProductionExecuteIO :: Execution r -> IO r
-    runProductionExecuteIO (Pure r) = return r
-    runProductionExecuteIO (Free step) = do
-      next <- runProductionStep step
-      runProductionExecuteIO next
-    
-    runProductionStep :: ExecutionAlgebra a -> IO a
-    runProductionStep (LoadFile tableName next) = do
-        fileContent <- B.readFile ("db/" ++ tableName ++ ".json")
-        return $ next fileContent
-    runProductionStep (SaveFile tableName content next) = do
-        B.writeFile ("db/" ++ tableName ++ ".json") content
-        return next
-    runProductionStep (ExecuteSqlStatement statement next) = do
-      result <- executeStatement statement
-      return $ next result
-    runProductionStep (GetTime next) = do
-        currentTime <- getCurrentTime
-        return $ next currentTime   
-    runProductionStep (HandleNow next) = do
-      currentTime <- getCurrentTime
-      let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" currentTime
-      let timeDataFrame = DataFrame [Column "current_time" StringType] [[StringValue formattedTime]]
-      return $ next (Right timeDataFrame)
-
--- Function to run a command using the test interpreter
-runTestExecuteIO :: Execution r -> InMemoryDB -> (r, InMemoryDB)
-runTestExecuteIO (Pure r) db = (r, db)
-runTestExecuteIO (Free step) db =
-  let (next, newDb) = runTestStep step db in
-  runTestExecuteIO next newDb
-
--- Test Interpreter for the Free Monad DSL
-runTestStep :: ExecutionAlgebra a -> InMemoryDB -> (a, InMemoryDB)
-runTestStep (ExecuteSqlStatementInMemory statement next) db =
-  case statement of
-    SelectFrom columns tableName -> 
-      let result = executeSelectInMemory columns tableName db
-      in (next result, db)
-    SelectAll tableName -> 
-      let result = executeSelectAllInMemory tableName db
-      in (next result, db)
-    SelectMin columns tableName ->
-      let result = executeSelectMinInMemory columns tableName db
-      in (next result, db)
-    SelectWithMin minCols otherCols tableName ->
-      let result = executeSelectWithMinInMemory minCols otherCols tableName db
-      in (next result, db)
-    SelectAvg columns tableName ->
-      let result = executeSelectAvgInMemory columns tableName db
-      in (next result, db)
-    ShowTables ->
-      let result = executeShowTablesInMemory db
-      in (next result, db)
-    ShowTable tableName ->
-      let result = executeShowTableInMemory tableName db
-      in (next result, db)
-    SelectWithConditions selectedCols tableName conditions ->
-      let result = executeSelectWithConditionsInMemory selectedCols tableName conditions db
-      in (next result, db)
-    DeleteFrom tableName conditions ->
-      let result = executeDeleteFromInMemory tableName conditions db
-      in case result of
-        Right (updatedDF, updatedDB) -> (next (Right updatedDF), updatedDB)
-        Left errMsg -> (next (Left errMsg), db)
-    Update tableName updates conditions ->
-      let result = executeUpdateInMemory tableName updates conditions db
-      in case result of
-        Right updatedDB -> 
-          let updatedDF = maybe (DataFrame [] []) id $ lookup tableName updatedDB
-          in (next (Right updatedDF), updatedDB)
-        Left errMsg -> (next (Left errMsg), db)
-    InsertInto tableName colNames vals -> 
-      let result = executeInsertIntoInMemory tableName colNames (concat vals) db
-      in case result of
-        Right updatedDB -> 
-          let updatedDF = fromMaybe (DataFrame [] []) (lookup tableName updatedDB)
-          in (next (Right updatedDF), updatedDB)
-        Left errMsg -> (next (Left errMsg), db)
-    _ -> (next (Left "Operation not supported in test DSL"), db)
 
 -- Initial in-memory database
 initialInMemoryDB :: InMemoryDB
@@ -157,6 +54,78 @@ initialInMemoryDB =
     ("flags", snd IMT.tableWithNulls),
     ("departments", snd IMT.tableDepartment)
   ]
+
+-- Function to run the Execution monad
+runExecuteIO :: Bool -> Execution r -> IO r
+runExecuteIO isTest (Pure r) = return r
+runExecuteIO isTest (Free step) = do
+    next <- runStep isTest step
+    runExecuteIO isTest next
+
+runStep :: Bool -> ExecutionAlgebra a -> IO a
+runStep isTest (LoadFile tableName next) = do
+    fileContent <- B.readFile ("db/" ++ tableName ++ ".json")
+    return $ next fileContent
+runStep isTest (SaveFile tableName content next) = do
+    B.writeFile ("db/" ++ tableName ++ ".json") content
+    return next
+runStep isTest (ExecuteSqlStatement statement next) =
+    if statement == Now
+    then handleNowStatement next
+    else if isTest
+         then let result = executeParsedStatement statement initialInMemoryDB
+              in return $ next result
+         else do
+             result <- executeStatement statement  -- Executes on the production database
+             return $ next result
+runStep isTest (GetTime next) = do
+    currentTime <- getCurrentTime
+    return $ next currentTime
+
+--Execute for test cases with InMemoryDB from hardcoded file
+executeParsedStatement :: MyParsedStatement -> InMemoryDB -> Either ErrorMessage DataFrame
+executeParsedStatement statement db = case statement of
+    SelectFrom columns tableName -> 
+      executeSelectInMemory columns tableName db
+    SelectAll tableName -> 
+      executeSelectAllInMemory tableName db
+    SelectMin columns tableName ->
+      executeSelectMinInMemory columns tableName db
+    SelectWithMin minCols otherCols tableName ->
+      executeSelectWithMinInMemory minCols otherCols tableName db
+    SelectAvg columns tableName ->
+      executeSelectAvgInMemory columns tableName db
+    ShowTables ->
+      executeShowTablesInMemory db
+    ShowTable tableName ->
+      executeShowTableInMemory tableName db
+    SelectWithConditions selectedCols tableName conditions ->
+      executeSelectWithConditionsInMemory selectedCols tableName conditions db
+    DeleteFrom tableName conditions ->
+        executeDeleteFromInMemory tableName conditions db
+    InsertInto tableName colNames vals ->
+        let flatVals = concat vals
+        in case executeInsertIntoInMemory tableName colNames flatVals db of
+            Right updatedDB ->
+                let updatedDF = fromMaybe (DataFrame [] []) (lookup tableName updatedDB)
+                in Right updatedDF
+            Left errorMsg -> Left errorMsg
+    _ -> Left "Operation not supported in in-memory execution"
+    
+-- Function to execute SQL commands
+executeSql :: Bool -> String -> Execution (Either ErrorMessage DataFrame)
+executeSql isTest sql = do
+  case parseStatement sql of
+    Right parsedStatement ->
+      if parsedStatement == Now
+      then do
+        currentTime <- liftF $ GetTime id
+        let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" currentTime
+        let timeDataFrame = DataFrame [Column "current_time" StringType] [[StringValue formattedTime]]
+        return $ Right timeDataFrame
+      else liftF $ ExecuteSqlStatement parsedStatement id
+    Left errorMsg ->
+      return $ Left errorMsg
   
   
 -------------------------------------------------helper functions-------------------------------------------------------
@@ -188,6 +157,14 @@ readDataFrameFile filePath = liftF $ LoadFile filePath (\content -> id (deserial
 -- Function to get the current time
 getTime :: Execution UTCTime
 getTime = liftF $ GetTime id
+
+-- Modified function to handle the Now statement
+handleNowStatement :: (Either ErrorMessage DataFrame -> a) -> IO a
+handleNowStatement next = do
+    currentTime <- getCurrentTime
+    let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" currentTime
+    let timeDataFrame = DataFrame [Column "current_time" StringType] [[StringValue formattedTime]]
+    return $ next (Right timeDataFrame)
 
 -- Helper function to find the minimum value in a list of Maybe Values
 minValue :: [Maybe Value] -> Value
@@ -381,14 +358,13 @@ executeSelectWithConditionsInMemory selectedCols tableName conditions db =
     
 -- Executes for in memory delete from
 
-executeDeleteFromInMemory :: String -> [Condition] -> InMemoryDB -> Either ErrorMessage (DataFrame, InMemoryDB)
+executeDeleteFromInMemory :: String -> [Condition] -> InMemoryDB -> Either ErrorMessage DataFrame
 executeDeleteFromInMemory tableName conditions db = 
   case lookup tableName db of
     Just (DataFrame allColumns allRows) ->
       let rowsAfterDeletion = filter (not . meetAllConditions allColumns conditions) allRows
           updatedDF = DataFrame allColumns rowsAfterDeletion
-          updatedDB = (tableName, updatedDF) : filter ((/= tableName) . fst) db
-      in Right (updatedDF, updatedDB)
+      in Right updatedDF
     Nothing -> Left $ "Table " ++ tableName ++ " not found"
     
 -- Execute for in memory update set

@@ -61,18 +61,6 @@ initializeState = do
   tables <- mapM (\(file, name) -> loadTable name file) tableFiles
   return $ Just $ AppState $ catMaybes tables
 
-loadTable :: TableName -> FilePath -> IO (Maybe (TableName, DataFrame))
-loadTable name file = do
-  fileExists <- doesFileExist file
-  if fileExists
-    then do
-      maybeDf <- Lib3.readDataFrame file
-      return $ Just (name, fromMaybe (getDefaultTable name) maybeDf)
-    else do
-      let defaultTable = getDefaultTable name
-      B.writeFile file $ Lib3.serializeDataFrame defaultTable
-      return $ Just (name, defaultTable)
-
 -- Execution function for the Free monad
 runExecuteIO :: Lib3.Execution r -> IO r
 runExecuteIO (Pure r) = return r
@@ -131,6 +119,18 @@ refreshState _ = do
     let tableFiles = fmap (\(name, _) -> ("db/" ++ name ++ ".json", name)) database
     tables <- mapM (\(file, name) -> loadTable name file) tableFiles
     return $ AppState $ catMaybes tables
+    
+loadTable :: TableName -> FilePath -> IO (Maybe (TableName, DataFrame))
+loadTable name file = do
+  fileExists <- doesFileExist file
+  if fileExists
+    then do
+      maybeDf <- Lib3.readDataFrame file
+      return $ Just (name, fromMaybe (getDefaultTable name) maybeDf)
+    else do
+      let defaultTable = getDefaultTable name
+      B.writeFile file $ Lib3.serializeDataFrame defaultTable
+      return $ Just (name, defaultTable)
  
 getDefaultTable :: TableName -> DataFrame
 getDefaultTable name =
