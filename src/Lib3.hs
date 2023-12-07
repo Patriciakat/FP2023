@@ -3,8 +3,10 @@
 {-# LANGUAGE GADTs #-}
 
 module Lib3
-  ( executeSql,
-    Execution,
+  ( Execution,
+    executeParsedStatement,
+    handleNowStatement,
+    executeSql,
     readDataFrameFile,
     ExecutionAlgebra(..),
     serializeDataFrame,
@@ -111,21 +113,6 @@ executeParsedStatement statement db = case statement of
                 in Right updatedDF
             Left errorMsg -> Left errorMsg
     _ -> Left "Operation not supported in in-memory execution"
-    
--- Function to execute SQL commands
-executeSql :: Bool -> String -> Execution (Either ErrorMessage DataFrame)
-executeSql isTest sql = do
-  case parseStatement sql of
-    Right parsedStatement ->
-      if parsedStatement == Now
-      then do
-        currentTime <- liftF $ GetTime id
-        let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" currentTime
-        let timeDataFrame = DataFrame [Column "current_time" StringType] [[StringValue formattedTime]]
-        return $ Right timeDataFrame
-      else liftF $ ExecuteSqlStatement parsedStatement id
-    Left errorMsg ->
-      return $ Left errorMsg
   
   
 -------------------------------------------------helper functions-------------------------------------------------------
@@ -164,6 +151,15 @@ handleNowStatement next = do
     let formattedTime = formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S" currentTime
     let timeDataFrame = DataFrame [Column "current_time" StringType] [[StringValue formattedTime]]
     return $ next (Right timeDataFrame)
+    
+-- Function to execute SQL commands for tests
+executeSql :: String -> Execution (Either ErrorMessage DataFrame)
+executeSql sql = do
+  case parseStatement sql of
+    Right parsedStatement ->
+      liftF $ ExecuteSqlStatement parsedStatement id
+    Left errorMsg ->
+      return $ Left errorMsg
 
 -- Helper function to find the minimum value in a list of Maybe Values
 minValue :: [Maybe Value] -> Value
