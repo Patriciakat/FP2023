@@ -6,7 +6,7 @@ import Lib2
 import Test.Hspec
 import Data.Aeson (encode, decode)
 import Lib2 (DataFrame(..), Value(..))
-import Lib3 (executeSql, runExecuteIO, initialInMemoryDB, serializeDataFrame, deserializeDataFrame)
+import Lib3 (executeSql, runTestExecuteIO, initialInMemoryDB, serializeDataFrame, deserializeDataFrame)
 import qualified Data.ByteString.Lazy as B
 import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile)
@@ -17,6 +17,7 @@ main :: IO ()
 main = hspec $ do
 
 --Lib1.hs tests
+
 
   describe "Lib1.findTableByName" $ do
     it "handles empty lists" $ do
@@ -47,13 +48,14 @@ main = hspec $ do
     it "renders a table" $ do
       Lib1.renderDataFrameAsTable 100 (snd D.tableEmployees) `shouldSatisfy` not . null
       
+
 --Lib2.hs query functionality tests setup with test DSL in lib3.hs file ran through Execute functions for inMemoryTables.hs rather than .json files.
 
   describe "Lib3.executeSql for SELECT queries" $ do
     let testDB = initialInMemoryDB
   
     it "selects all columns from employees" $ do
-        result <- runExecuteIO True (executeSql "SELECT * FROM employees")  -- runExecuteIO with isTest set to True
+        let (result, _) = runTestExecuteIO (executeSql "SELECT * FROM employees") testDB
         case result of
           Right df -> do
             df `shouldBe` DataFrame [Column "id" IntegerType, 
@@ -67,7 +69,7 @@ main = hspec $ do
           Left errMsg -> fail errMsg
     
     it "selects id column from employees" $ do
-        result <- runExecuteIO True (executeSql "SELECT id FROM employees")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT id FROM employees") testDB
         case result of
           Right df -> do
             df `shouldBe` DataFrame [Column "id" IntegerType]
@@ -78,7 +80,7 @@ main = hspec $ do
           Left errMsg -> fail errMsg
 
     it "selects id and name columns from employees" $ do
-        result <- runExecuteIO True (executeSql "SELECT id, name FROM employees")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT id, name FROM employees") testDB
         case result of
           Right df -> do
             df `shouldBe` DataFrame [Column "id" IntegerType, 
@@ -90,7 +92,7 @@ main = hspec $ do
           Left errMsg -> fail errMsg
 
     it "selects id, name, and surname columns from employees" $ do
-        result <- runExecuteIO True (executeSql "SELECT id, name, surname FROM employees")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT id, name, surname FROM employees") testDB
         case result of
           Right df -> do
             df `shouldBe` DataFrame [Column "id" IntegerType, 
@@ -106,31 +108,31 @@ main = hspec $ do
     let testDB = initialInMemoryDB
 
     it "selects min(id) from employees" $ do
-      result <- runExecuteIO True (executeSql "SELECT MIN(id) FROM employees")
+      let (result, _) = runTestExecuteIO (executeSql "SELECT MIN(id) FROM employees") testDB
       case result of
         Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType] [[IntegerValue 1]]
         Left errMsg -> fail errMsg
 
     it "selects min(id) from departments" $ do
-      result <- runExecuteIO True (executeSql "SELECT MIN(id) FROM departments")
+      let (result, _) = runTestExecuteIO (executeSql "SELECT MIN(id) FROM departments") testDB
       case result of
         Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType] [[IntegerValue 100]]
         Left errMsg -> fail errMsg
 
     it "selects min(id), name from employees" $ do
-      result <- runExecuteIO True (executeSql "SELECT MIN(id), name FROM employees")
+      let (result, _) = runTestExecuteIO (executeSql "SELECT MIN(id), name FROM employees") testDB
       case result of
         Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType, Column "name" StringType] [[IntegerValue 1, StringValue "Vi"]]
         Left errMsg -> fail errMsg
 
     it "selects min(id), address, town from departments" $ do
-      result <- runExecuteIO True (executeSql "SELECT MIN(id), address, town FROM departments")
+      let (result, _) = runTestExecuteIO (executeSql "SELECT MIN(id), address, town FROM departments") testDB
       case result of
         Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType, Column "address" StringType, Column "town" StringType] [[IntegerValue 100, StringValue "123 Market St.", StringValue "Townsville"]]
         Left errMsg -> fail errMsg
 
     it "selects min(id), department_id, name, surname from employees" $ do
-      result <- runExecuteIO True (executeSql "SELECT MIN(id), department_id, name, surname FROM employees")
+      let (result, _) = runTestExecuteIO (executeSql "SELECT MIN(id), department_id, name, surname FROM employees") testDB
       case result of
         Right df -> df `shouldBe` DataFrame [Column "min(id)" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType] [[IntegerValue 1, IntegerValue 100, StringValue "Vi", StringValue "Po"]]
         Left errMsg -> fail errMsg
@@ -139,7 +141,7 @@ main = hspec $ do
     let testDB = initialInMemoryDB
 
     it "selects avg(id) from employees" $ do
-      result <- runExecuteIO True (executeSql "SELECT avg(id) FROM employees")
+      let (result, _) = runTestExecuteIO (executeSql "SELECT avg(id) FROM employees") testDB
       case result of
         Right (DataFrame columns rows) -> do
           columns `shouldBe` [Column "avg(id)" FloatType]
@@ -148,7 +150,7 @@ main = hspec $ do
         Left errMsg -> fail errMsg
 
     it "selects avg(id) from departments" $ do
-      result <- runExecuteIO True (executeSql "SELECT avg(id) FROM departments")
+      let (result, _) = runTestExecuteIO (executeSql "SELECT avg(id) FROM departments") testDB
       case result of
         Right (DataFrame columns rows) -> do
           columns `shouldBe` [Column "avg(id)" FloatType]
@@ -160,7 +162,7 @@ main = hspec $ do
       let testDB = initialInMemoryDB
 
       it "shows all tables" $ do
-          result <- runExecuteIO True (executeSql "SHOW TABLES")
+          let (result, _) = runTestExecuteIO (executeSql "SHOW TABLES") testDB
           case result of
               Right df -> df `shouldBe` DataFrame [Column "Tables" StringType] 
                                                   [[StringValue "employees"], 
@@ -172,7 +174,7 @@ main = hspec $ do
               Left errMsg -> fail errMsg
 
       it "shows schema of table employees" $ do
-          result <- runExecuteIO True (executeSql "SHOW TABLE employees")
+          let (result, _) = runTestExecuteIO (executeSql "SHOW TABLE employees") testDB
           case result of
               Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
                                                   [[StringValue "id", StringValue "IntegerType"],
@@ -182,7 +184,7 @@ main = hspec $ do
               Left errMsg -> fail errMsg
 
       it "shows schema of table departments" $ do
-          result <- runExecuteIO True (executeSql "SHOW TABLE departments")
+          let (result, _) = runTestExecuteIO (executeSql "SHOW TABLE departments") testDB
           case result of
               Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
                                                   [[StringValue "id", StringValue "IntegerType"],
@@ -192,7 +194,7 @@ main = hspec $ do
               Left errMsg -> fail errMsg
 
       it "shows schema of table long_strings" $ do
-              result <- runExecuteIO True (executeSql "SHOW TABLE long_strings")
+              let (result, _) = runTestExecuteIO (executeSql "SHOW TABLE long_strings") testDB
               case result of
                   Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
                                                       [[StringValue "text1", StringValue "StringType"],
@@ -200,7 +202,7 @@ main = hspec $ do
                   Left errMsg -> fail errMsg
 
       it "shows schema of table flags" $ do
-              result <- runExecuteIO True (executeSql "SHOW TABLE flags")
+              let (result, _) = runTestExecuteIO (executeSql "SHOW TABLE flags") testDB
               case result of
                   Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
                                                       [[StringValue "flag", StringValue "StringType"],
@@ -208,7 +210,7 @@ main = hspec $ do
                   Left errMsg -> fail errMsg
 
       it "shows schema of table invalid1" $ do
-              result <- runExecuteIO True (executeSql "SHOW TABLE invalid1")
+              let (result, _) = runTestExecuteIO (executeSql "SHOW TABLE invalid1") testDB
               case result of
                   Right df -> df `shouldBe` DataFrame [Column "Column Name" StringType, Column "Type" StringType]
                                                       [[StringValue "id", StringValue "IntegerType"]]
@@ -218,7 +220,7 @@ main = hspec $ do
       let testDB = initialInMemoryDB
 
       it "selects * from employees where id=3" $ do
-        result <- runExecuteIO True (executeSql "SELECT * FROM employees WHERE id=3")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT * FROM employees WHERE id=3") testDB
         case result of
           Right (DataFrame columns rows) -> do
             columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
@@ -227,7 +229,7 @@ main = hspec $ do
           Left errMsg -> fail errMsg
 
       it "selects * from employees where id=3 and name=\"Ed\"" $ do
-        result <- runExecuteIO True (executeSql "SELECT * FROM employees WHERE id=3 AND name=\"Ed\"")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT * FROM employees WHERE id=3 AND name=\"Ed\"") testDB
         case result of
           Right (DataFrame columns rows) -> do
             columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
@@ -235,7 +237,7 @@ main = hspec $ do
           Left errMsg -> fail errMsg
 
       it "selects * from employees where name=\"Ed\"" $ do
-        result <- runExecuteIO True (executeSql "SELECT * FROM employees WHERE name=\"Ed\"")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT * FROM employees WHERE name=\"Ed\"") testDB
         case result of
           Right (DataFrame columns rows) -> do
             columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
@@ -244,7 +246,7 @@ main = hspec $ do
           Left errMsg -> fail errMsg
 
       it "selects * from employees where id=3 and name=\"Ed\"" $ do
-        result <- runExecuteIO True (executeSql "SELECT * FROM employees WHERE id=3 AND name=\"Ed\"")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT * FROM employees WHERE id=3 AND name=\"Ed\"") testDB
         case result of
           Right (DataFrame columns rows) -> do
             columns `shouldBe` [Column "id" IntegerType, Column "department_id" IntegerType, Column "name" StringType, Column "surname" StringType]
@@ -252,7 +254,7 @@ main = hspec $ do
           Left errMsg -> fail errMsg
 
       it "selects id, name from employees where department_id=101" $ do
-        result <- runExecuteIO True (executeSql "SELECT id, name FROM employees WHERE department_id=101")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT id, name FROM employees WHERE department_id=101") testDB
         case result of
           Right (DataFrame columns rows) -> do
             columns `shouldBe` [Column "id" IntegerType, Column "name" StringType]
@@ -260,7 +262,7 @@ main = hspec $ do
           Left errMsg -> fail errMsg
 
       it "selects department_id, surname, name from employees where surname=\"Po\"" $ do
-        result <- runExecuteIO True (executeSql "SELECT department_id, surname, name FROM employees WHERE surname=\"Po\"")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT department_id, surname, name FROM employees WHERE surname=\"Po\"") testDB
         case result of
           Right (DataFrame columns rows) -> do
             columns `shouldBe` [Column "department_id" IntegerType, Column "surname" StringType, Column "name" StringType]
@@ -268,7 +270,7 @@ main = hspec $ do
           Left errMsg -> fail errMsg
 
       it "selects id, town from departments where id=101" $ do
-        result <- runExecuteIO True (executeSql "SELECT id, town FROM departments WHERE id=101")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT id, town FROM departments WHERE id=101") testDB
         case result of
           Right (DataFrame columns rows) -> do
             columns `shouldBe` [Column "id" IntegerType, Column "town" StringType]
@@ -276,26 +278,15 @@ main = hspec $ do
           Left errMsg -> fail errMsg
 
       it "selects address, town from departments where id=102 and town=\"Techville\"" $ do
-        result <- runExecuteIO True (executeSql "SELECT address, town FROM departments WHERE id=102 AND town=\"Techville\"")
+        let (result, _) = runTestExecuteIO (executeSql "SELECT address, town FROM departments WHERE id=102 AND town=\"Techville\"") testDB
         case result of
           Right (DataFrame columns rows) -> do
             columns `shouldBe` [Column "address" StringType, Column "town" StringType]
             rows `shouldBe` [[StringValue "789 Tech Blvd.", StringValue "Techville"]]
           Left errMsg -> fail errMsg
-          
-      it "serializes a DataFrame and writes to a file correctly" $ do
-        let testDf = DataFrame [Column "id" IntegerType, Column "name" StringType]
-                               [[IntegerValue 1, StringValue "Alice"], 
-                                [IntegerValue 2, StringValue "Bob"]]
-        let jsonContent = serializeDataFrame testDf
-        withSystemTempFile "test.json" $ \filePath handle -> do
-          B.hPut handle jsonContent
-          hClose handle
-          fileContent <- B.readFile filePath
-          fileContent `shouldBe` jsonContent
-          
+
   describe "Serialization and deserialization tests" $ do
-          
+
       it "serializes a DataFrame and writes to a file correctly" $ do
               let testDf = DataFrame [Column "id" IntegerType, Column "name" StringType]
                                      [[IntegerValue 1, StringValue "Alice"], 
@@ -306,7 +297,7 @@ main = hspec $ do
                 hClose handle
                 fileContent <- B.readFile filePath
                 fileContent `shouldBe` jsonContent
-          
+
       it "deserializes a DataFrame from a file correctly" $ do
         let expectedDf = DataFrame [Column "age" IntegerType, Column "city" StringType]
                                    [[IntegerValue 30, StringValue "New York"], 
@@ -319,7 +310,7 @@ main = hspec $ do
           let maybeDf = deserializeDataFrame fileContent
           isJust maybeDf `shouldBe` True
           fromJust maybeDf `shouldBe` expectedDf
-          
+
       it "correctly serializes and deserializes a complex DataFrame" $ do
         let complexDf = DataFrame [Column "id" IntegerType, Column "name" StringType, Column "active" BoolType]
                                   [[IntegerValue 1, StringValue "Eve", BoolValue True], 

@@ -61,29 +61,26 @@ initializeState = do
   return $ Just $ AppState $ catMaybes tables
 
 -- Execution function for the Free monad
-runExecuteIO :: Bool -> Lib3.Execution r -> IO r
-runExecuteIO isTest (Pure r) = return r
-runExecuteIO isTest (Free step) = do
-    next <- runStep isTest step
-    runExecuteIO isTest next
+runExecuteIO :: Lib3.Execution r -> IO r
+runExecuteIO (Pure r) = return r
+runExecuteIO (Free step) = do
+    next <- runStep step
+    runExecuteIO next
     where
-      runStep :: Bool -> Lib3.ExecutionAlgebra a -> IO a
-      runStep isTest (Lib3.LoadFile filePath next) = do
+      runStep :: Lib3.ExecutionAlgebra a -> IO a
+      runStep (Lib3.LoadFile filePath next) = do
           fileContent <- B.readFile filePath
           return (next fileContent)
-      runStep isTest (Lib3.SaveFile tableName content next) = do
+      runStep (Lib3.SaveFile tableName content next) = do
           B.writeFile ("db/" ++ tableName ++ ".json") content
           return next
-      runStep isTest (Lib3.ExecuteSqlStatement statement next) = do
+      runStep (Lib3.ExecuteSqlStatement statement next) = 
           if statement == Lib2.Now
-          then Lib3.handleNowStatement next
-          else if isTest
-               then let result = Lib3.executeParsedStatement statement Lib3.initialInMemoryDB
-                    in return $ next result
-               else do
-                    result <- Lib2.executeStatement statement
-                    return $ next result
-      runStep isTest (Lib3.GetTime next) = do
+          then handleNowStatement next
+          else do
+              result <- Lib2.executeStatement statement
+              return $ next result
+      runStep (Lib3.GetTime next) = do
           currentTime <- getCurrentTime
           return $ next currentTime
         
@@ -94,15 +91,12 @@ runExecuteIO isTest (Free step) = do
 -- Function to execute a command
 executeCommand :: String -> AppState -> IO (Either String DataFrame, AppState)
 executeCommand sql state = do
-    case Lib2.parseStatement sql of
-        Right parsedStatement -> do
-            result <- runExecuteIO False (liftF $ Lib3.ExecuteSqlStatement parsedStatement id)
-            case result of
-                Right df -> do
-                    updatedState <- refreshState state
-                    return (Right df, updatedState)
-                Left errorMsg -> return (Left errorMsg, state)
-        Left parseError -> return (Left ("Error parsing SQL: " ++ parseError), state)
+    result <- runExecuteIO (Lib3.executeSql sql)
+    case result of
+        Right df -> do
+            updatedState <- refreshState state
+            return (Right df, updatedState)
+        Left errorMsg -> return (Left errorMsg, state)
 
 -- Auto-completion function for REPL
 completer :: Monad m => WordCompleter m

@@ -14,7 +14,7 @@ module Lib3
     readDataFrame,
     saveDataFrame,
     getTime,
-    runExecuteIO,
+    runTestExecuteIO,
     initialInMemoryDB
   )
 where
@@ -57,32 +57,38 @@ initialInMemoryDB =
     ("departments", snd IMT.tableDepartment)
   ]
 
--- Function to run the Execution monad
-runExecuteIO :: Bool -> Execution r -> IO r
-runExecuteIO isTest (Pure r) = return r
-runExecuteIO isTest (Free step) = do
-    next <- runStep isTest step
-    runExecuteIO isTest next
+-- Function to run the Execution monad for production
+runExecuteIO :: Execution r -> IO r
+runExecuteIO (Pure r) = return r
+runExecuteIO (Free step) = do
+    next <- runProductionStep step
+    runExecuteIO next
 
-runStep :: Bool -> ExecutionAlgebra a -> IO a
-runStep isTest (LoadFile tableName next) = do
+runProductionStep :: ExecutionAlgebra a -> IO a
+runProductionStep (LoadFile tableName next) = do
     fileContent <- B.readFile ("db/" ++ tableName ++ ".json")
     return $ next fileContent
-runStep isTest (SaveFile tableName content next) = do
+runProductionStep (SaveFile tableName content next) = do
     B.writeFile ("db/" ++ tableName ++ ".json") content
     return next
-runStep isTest (ExecuteSqlStatement statement next) =
-    if statement == Now
-    then handleNowStatement next
-    else if isTest
-         then let result = executeParsedStatement statement initialInMemoryDB
-              in return $ next result
-         else do
-             result <- executeStatement statement  -- Executes on the production database
-             return $ next result
-runStep isTest (GetTime next) = do
+runProductionStep (ExecuteSqlStatement statement next) = do
+    result <- executeStatement statement  -- Executes on the production database
+    return $ next result
+runProductionStep (GetTime next) = do
     currentTime <- getCurrentTime
     return $ next currentTime
+
+-- Function to run the Execution monad for testing    
+runTestExecuteIO :: Execution r -> InMemoryDB -> (r, InMemoryDB)
+runTestExecuteIO (Pure r) db = (r, db)
+runTestExecuteIO (Free step) db = 
+    let (next, newDb) = runTestStep step db in
+    runTestExecuteIO next newDb
+
+runTestStep :: ExecutionAlgebra a -> InMemoryDB -> (a, InMemoryDB)
+runTestStep (ExecuteSqlStatement statement next) db =
+    let result = executeParsedStatement statement db
+    in (next result, db)
 
 --Execute for test cases with InMemoryDB from hardcoded file
 executeParsedStatement :: MyParsedStatement -> InMemoryDB -> Either ErrorMessage DataFrame
